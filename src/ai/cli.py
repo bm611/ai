@@ -9,7 +9,7 @@ from ai.config import load_config, save_config, CONFIG_FILE
 from ai.client import stream_prompt
 
 POPULAR_MODELS = [
-    ("x-ai/glm-5.1", "Grok GLM 5.1"),
+    ("x-ai/grok-4.1-fast", "Grok 4.1 Fast"),
     ("google/gemma-4-31b-it", "Gemma 4 31B Instruct"),
     ("minimax/minimax-m2.7", "MiniMax M2.7"),
     ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite Preview"),
@@ -42,7 +42,7 @@ def _read_file(path_str: str) -> str:
     if not p.is_file():
         Console(stderr=True).print(f"[red bold]Error:[/] file not found: {p}")
         sys.exit(1)
-    return f"<file path=\"{p.name}\">\n{p.read_text()}\n</file>"
+    return f'<file path="{p.name}">\n{p.read_text()}\n</file>'
 
 
 class PromptGroup(click.Group):
@@ -74,9 +74,15 @@ class PromptGroup(click.Group):
     invoke_without_command=True,
     context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
 )
-@click.option("-m", "--model", default=None, help="Override the model for this request.")
 @click.option(
-    "-f", "--file", "files", multiple=True, type=click.Path(),
+    "-m", "--model", default=None, help="Override the model for this request."
+)
+@click.option(
+    "-f",
+    "--file",
+    "files",
+    multiple=True,
+    type=click.Path(),
     help="Attach file(s) as context. Repeatable: -f a.py -f b.js",
 )
 @click.pass_context
@@ -135,6 +141,7 @@ def cli(ctx, model, files):
 
 # ── config subcommand group ──────────────────────────────────────────
 
+
 @cli.group()
 def config():
     """View or update configuration."""
@@ -144,6 +151,7 @@ def config():
 def config_show():
     """Show current config values and file location."""
     import json
+
     cfg = load_config()
     console = Console()
     console.print(f"\n[dim]Config file:[/] {CONFIG_FILE}\n")
