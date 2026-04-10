@@ -195,7 +195,7 @@ def config_set(key, value):
         try:
             value = json.loads(value)
         except json.JSONDecodeError:
-            pass
+            value = {"order": [value]}
 
     cfg[key] = value
     save_config(cfg)

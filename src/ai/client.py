@@ -123,6 +123,7 @@ def stream_prompt(
                 console=console,
                 refresh_per_second=8,
                 vertical_overflow="visible",
+                transient=True,
             ) as live:
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
@@ -145,6 +146,9 @@ def stream_prompt(
                         token_count += 1
                         collected += text
                         live.update(Padding(_md(collected), (1, 2)))
+
+    # Print the final rendered markdown once (non-live) so it's clean
+    console.print(Padding(_md(collected), (1, 2)))
 
 
 
