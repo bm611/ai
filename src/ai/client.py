@@ -103,6 +103,22 @@ def stream_prompt(
         return Markdown(text, code_theme=code_theme)
 
     console = Console(theme=md_theme)
+
+    # ── banner ──
+    logo = [
+        r"  __                       .__              .__           .__            __   ",
+        r"_/  |_  ___________  _____ |__| ____ _____  |  |     ____ |  |__ _____ _/  |_ ",
+        r"\   __\/ __ \_  __ \/     \|  |/    \\__  \ |  |   _/ ___\|  |  \\__  \\   __\\",
+        r" |  | \  ___/|  | \/  Y Y  \  |   |  \/ __ \|  |__ \  \___|   Y  \/ __ \|  |  ",
+        r" |__|  \___  >__|  |__|_|  /__|___|  (____  /____/  \___  >___|  (____  /__|  ",
+        r"           \/            \/        \/     \/            \/     \/     \/      ",
+    ]
+    console.print()
+    for line in logo:
+        styled = Text(line, style="bold magenta")
+        console.print(styled)
+    console.print(Rule(style="dim"))
+
     collected = ""
     token_count = 0
     used_model = model
