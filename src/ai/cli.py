@@ -9,16 +9,10 @@ from ai.config import load_config, save_config, CONFIG_FILE
 from ai.client import stream_prompt
 
 POPULAR_MODELS = [
-    ("openai/gpt-4o-mini", "Fast & cheap, great for everyday use"),
-    ("openai/gpt-4o", "GPT-4o flagship"),
-    ("openai/gpt-oss-120b", "Open-source 120B via OpenAI"),
-    ("anthropic/claude-sonnet-4", "Claude Sonnet 4"),
-    ("anthropic/claude-3.5-sonnet", "Claude 3.5 Sonnet"),
-    ("google/gemini-2.5-flash-preview", "Gemini 2.5 Flash"),
-    ("google/gemini-2.5-pro-preview", "Gemini 2.5 Pro"),
-    ("deepseek/deepseek-r1", "DeepSeek R1 reasoning"),
-    ("deepseek/deepseek-chat", "DeepSeek V3 chat"),
-    ("meta-llama/llama-4-maverick", "Llama 4 Maverick"),
+    ("x-ai/glm-5.1", "Grok GLM 5.1"),
+    ("google/gemma-4-31b-it", "Gemma 4 31B Instruct"),
+    ("minimax/minimax-m2.7", "MiniMax M2.7"),
+    ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite Preview"),
 ]
 
 THEME_OPTIONS = [

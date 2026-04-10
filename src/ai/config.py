@@ -8,7 +8,7 @@ CONFIG_DIR = Path.home() / ".config" / "ai-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULTS = {
-    "model": "openai/gpt-oss-120b",
+    "model": "x-ai/grok-4.1-fast",
     "provider": None,  # let OpenRouter pick; or set e.g. {"order": ["DeepInfra"]}
     "theme": "auto",  # "auto", "dark", "light", or any pygments theme name
 }
