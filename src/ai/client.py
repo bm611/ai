@@ -13,31 +13,35 @@ from rich.rule import Rule
 from rich.text import Text
 from rich.theme import Theme
 
-DARK_THEME = Theme({
-    "markdown.h1": "bold bright_magenta",
-    "markdown.h2": "bold bright_cyan",
-    "markdown.h3": "bold bright_green",
-    "markdown.h4": "bold bright_yellow",
-    "markdown.link": "bright_blue underline",
-    "markdown.item.bullet": "bright_cyan",
-    "markdown.item.number": "bright_cyan",
-    "markdown.block_quote": "italic magenta",
-    "markdown.code": "bright_green on grey11",
-    "markdown.hr": "bright_magenta",
-})
+DARK_THEME = Theme(
+    {
+        "markdown.h1": "bold bright_magenta",
+        "markdown.h2": "bold bright_cyan",
+        "markdown.h3": "bold bright_green",
+        "markdown.h4": "bold bright_yellow",
+        "markdown.link": "bright_blue underline",
+        "markdown.item.bullet": "bright_cyan",
+        "markdown.item.number": "bright_cyan",
+        "markdown.block_quote": "italic magenta",
+        "markdown.code": "bright_green on grey11",
+        "markdown.hr": "bright_magenta",
+    }
+)
 
-LIGHT_THEME = Theme({
-    "markdown.h1": "bold dark_magenta",
-    "markdown.h2": "bold dark_cyan",
-    "markdown.h3": "bold green",
-    "markdown.h4": "bold dark_orange",
-    "markdown.link": "blue underline",
-    "markdown.item.bullet": "dark_cyan",
-    "markdown.item.number": "dark_cyan",
-    "markdown.block_quote": "italic dark_magenta",
-    "markdown.code": "dark_green on grey93",
-    "markdown.hr": "dark_magenta",
-})
+LIGHT_THEME = Theme(
+    {
+        "markdown.h1": "bold dark_magenta",
+        "markdown.h2": "bold dark_cyan",
+        "markdown.h3": "bold green",
+        "markdown.h4": "bold dark_orange",
+        "markdown.link": "blue underline",
+        "markdown.item.bullet": "dark_cyan",
+        "markdown.item.number": "dark_cyan",
+        "markdown.block_quote": "italic dark_magenta",
+        "markdown.code": "dark_green on grey93",
+        "markdown.hr": "dark_magenta",
+    }
+)
 
 CODE_THEMES = {
     "dark": "monokai",
@@ -80,6 +84,7 @@ def stream_prompt(
     model: str,
     provider: dict | None = None,
     theme: str = "auto",
+    chat: bool = False,
 ) -> None:
     headers = {
         "Authorization": f"Bearer {_get_api_key()}",
@@ -88,9 +93,11 @@ def stream_prompt(
         "X-Title": "ai-cli",
     }
 
+    messages: list[dict] = [{"role": "user", "content": prompt}]
+
     body: dict = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "stream": True,
         "stream_options": {"include_usage": True},
     }
@@ -166,8 +173,6 @@ def stream_prompt(
     # Print the final rendered markdown once (non-live) so it's clean
     console.print(Padding(_md(collected), (1, 2)))
 
-
-
     t_end = time.perf_counter()
     elapsed = t_end - t_start
     gen_time = t_end - (first_token_time or t_start)
@@ -196,3 +201,101 @@ def stream_prompt(
     console.print(Rule(style="dim"))
     console.print(Text.assemble(*parts))
     console.print()
+
+    if not chat:
+        return
+
+    while True:
+        try:
+            followup = input(
+                "\n\033[1;36mFollow-up\033[0m\033[2m (or \033[1mq\033[0m\033[2m to quit):\033[0m "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+
+        if followup.lower() in ("q", "quit", "exit"):
+            return
+
+        if not followup:
+            continue
+
+        messages.append({"role": "assistant", "content": collected})
+        messages.append({"role": "user", "content": followup})
+        body["messages"] = messages
+
+        collected = ""
+        token_count = 0
+        used_model = model
+        provider_name = ""
+        t_start = time.perf_counter()
+        first_token_time = None
+
+        with httpx.Client(timeout=120) as http:
+            with http.stream(
+                "POST", OPENROUTER_URL, json=body, headers=headers
+            ) as resp:
+                if resp.status_code != 200:
+                    resp.read()
+                    console.print(f"[red bold]Error {resp.status_code}:[/] {resp.text}")
+                    sys.exit(1)
+
+                usage = {}
+                with Live(
+                    Padding(_md(""), (1, 2)),
+                    console=console,
+                    refresh_per_second=8,
+                    vertical_overflow="visible",
+                    transient=True,
+                ) as live:
+                    for line in resp.iter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        payload = line.removeprefix("data: ").strip()
+                        if payload == "[DONE]":
+                            break
+                        chunk = json.loads(payload)
+                        if "model" in chunk:
+                            used_model = chunk["model"]
+                        if "provider" in chunk:
+                            provider_name = chunk["provider"]
+                        if "usage" in chunk:
+                            usage = chunk["usage"]
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        text = delta.get("content", "")
+                        if text:
+                            if first_token_time is None:
+                                first_token_time = time.perf_counter()
+                            token_count += 1
+                            collected += text
+                            live.update(Padding(_md(collected), (1, 2)))
+
+        console.print(Padding(_md(collected), (1, 2)))
+
+        t_end = time.perf_counter()
+        elapsed = t_end - t_start
+        gen_time = t_end - (first_token_time or t_start)
+
+        real_tokens = usage.get("completion_tokens", token_count)
+        tok_per_sec = real_tokens / gen_time if gen_time > 0 else 0
+
+        parts = [
+            ("✦ ", "bold magenta"),
+            (used_model, "bold cyan"),
+        ]
+        if provider_name:
+            parts += [("  via ", "dim"), (provider_name, "bold yellow")]
+        parts += [
+            ("  │  ", "dim"),
+            (f"{real_tokens}", "bold"),
+            (" tokens", "dim"),
+            ("  │  ", "dim"),
+            (f"{tok_per_sec:.1f}", "bold"),
+            (" tok/s", "dim"),
+            ("  │  ", "dim"),
+            (f"{elapsed:.1f}", "bold"),
+            ("s", "dim"),
+        ]
+        console.print(Rule(style="dim"))
+        console.print(Text.assemble(*parts))
+        console.print()

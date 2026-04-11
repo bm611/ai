@@ -85,8 +85,16 @@ class PromptGroup(click.Group):
     type=click.Path(),
     help="Attach file(s) as context. Repeatable: -f a.py -f b.js",
 )
+@click.option(
+    "-c",
+    "--chat",
+    "chat",
+    is_flag=True,
+    default=False,
+    help="Enter chat mode to ask follow-up questions after the initial response.",
+)
 @click.pass_context
-def cli(ctx, model, files):
+def cli(ctx, model, files, chat):
     """AI CLI — query LLMs via OpenRouter from your terminal.
 
     \b
@@ -95,6 +103,7 @@ def cli(ctx, model, files):
         ai -f main.py "explain this code"
         ai -f src/a.py -f src/b.py "find the bug"
         ai -m anthropic/claude-sonnet-4 "write a haiku"
+        ai -c "explain quicksort"          # chat mode: ask follow-ups
         pbpaste | ai "review this code"
         cat log.txt | ai "summarize errors"
 
@@ -136,7 +145,9 @@ def cli(ctx, model, files):
     use_model = model or cfg["model"]
     provider = cfg.get("provider")
 
-    stream_prompt("\n\n".join(parts), use_model, provider, cfg.get("theme", "auto"))
+    stream_prompt(
+        "\n\n".join(parts), use_model, provider, cfg.get("theme", "auto"), chat=chat
+    )
 
 
 # ── config subcommand group ──────────────────────────────────────────
