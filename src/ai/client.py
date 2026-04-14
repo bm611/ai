@@ -241,7 +241,15 @@ def stream_prompt(
         "X-Title": "ai-cli",
     }
 
-    messages: list[dict] = [{"role": "user", "content": prompt}]
+    from datetime import date
+
+    messages: list[dict] = [
+        {
+            "role": "system",
+            "content": f"Today's date is {date.today().isoformat()}.",
+        },
+        {"role": "user", "content": prompt},
+    ]
 
     body: dict = {
         "model": model,
