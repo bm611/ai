@@ -8,7 +8,6 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.padding import Padding
-from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 from rich.theme import Theme
