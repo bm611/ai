@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 import time
 
@@ -224,8 +225,28 @@ def stream_prompt(
 
     md_theme, code_theme = _resolve_theme(theme)
 
+    def _prep_math(text: str) -> str:
+        # Wrap LaTeX display math ([ ... ]) and ($ ... $) in code blocks
+        text = re.sub(
+            r'\\\[(.+?)\\\]',
+            lambda m: f'```\n{m.group(1).strip()}\n```',
+            text, flags=re.DOTALL,
+        )
+        text = re.sub(
+            r'\$\$(.+?)\$\$',
+            lambda m: f'```\n{m.group(1).strip()}\n```',
+            text, flags=re.DOTALL,
+        )
+        # Wrap inline math ($...$) in inline code
+        text = re.sub(
+            r'(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)',
+            lambda m: f'`{m.group(1).strip()}`',
+            text,
+        )
+        return text
+
     def _md(text: str) -> Markdown:
-        return Markdown(text, code_theme=code_theme)
+        return Markdown(_prep_math(text), code_theme=code_theme)
 
     console = Console(theme=md_theme)
 
