@@ -80,6 +80,57 @@ def _resolve_theme(theme_setting: str) -> tuple[Theme, str]:
     return md_theme, CODE_THEMES[mode]
 
 
+ToolCall = dict[int, dict]  # index -> {id, name, arguments}
+
+
+def _accumulate_delta(delta: dict, acc: ToolCall) -> str:
+    """Merge tool_call deltas and return text content."""
+    for tc in delta.get("tool_calls", []):
+        idx = tc["index"]
+        acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+        acc[idx]["id"] = tc.get("id") or acc[idx]["id"]
+        acc[idx]["name"] = tc.get("function", {}).get("name") or acc[idx]["name"]
+        acc[idx]["arguments"] += tc.get("function", {}).get("arguments", "")
+    return delta.get("content", "")
+
+
+def _handle_tool_calls(tc_acc: ToolCall, messages: list[dict], console: Console) -> None:
+    """Execute accumulated tool calls and append results to messages."""
+    sorted_tcs = sorted(tc_acc.values(), key=lambda x: x["id"])
+    messages.append({
+        "role": "assistant",
+        "tool_calls": [
+            {"id": tc["id"], "type": "function",
+             "function": {"name": tc["name"], "arguments": tc["arguments"]}}
+            for tc in sorted_tcs
+        ],
+    })
+    for tc in sorted_tcs:
+        query = json.loads(tc["arguments"]).get("query", "")
+        console.print(f"  [dim]⟳ calling[/] [bold cyan]{tc['name']}[/][dim]({query})[/]")
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tc["id"],
+            "content": execute_tool(tc["name"], tc["arguments"]),
+        })
+
+
+def _print_stats(console: Console, used_model: str, provider_name: str,
+                 elapsed: float, gen_time: float, real_tokens: int) -> None:
+    tok_per_sec = real_tokens / gen_time if gen_time > 0 else 0
+    parts = [("✦ ", "bold magenta"), (used_model, "bold cyan")]
+    if provider_name:
+        parts += [("  via ", "dim"), (provider_name, "bold yellow")]
+    parts += [
+        ("  │  ", "dim"), (f"{real_tokens}", "bold"), (" tokens", "dim"),
+        ("  │  ", "dim"), (f"{tok_per_sec:.1f}", "bold"), (" tok/s", "dim"),
+        ("  │  ", "dim"), (f"{elapsed:.1f}", "bold"), ("s", "dim"),
+    ]
+    console.print(Rule(style="dim"))
+    console.print(Text.assemble(*parts))
+    console.print()
+
+
 def _do_stream(
     body: dict,
     headers: dict,
@@ -87,19 +138,9 @@ def _do_stream(
     console: Console,
     _md,
 ) -> tuple[str, str, str, dict]:
-    """Stream a single chat completion, handling tool calls automatically.
-
-    Returns (collected_text, used_model, provider_name, usage).
-    """
-    collected = ""
-    token_count = 0
-    used_model = body["model"]
-    provider_name = ""
-    t_start = time.perf_counter()
-    first_token_time: float | None = None
-
-    # accumulators for tool calls streamed in deltas
-    tool_calls_acc: dict[int, dict] = {}  # index -> {id, name, arguments}
+    """Stream a single chat completion, handling tool calls automatically."""
+    collected, used_model, first_token_time, token_count = "", body["model"], None, 0
+    provider_name, tool_calls_acc = "", {}
 
     with httpx.Client(timeout=120) as http:
         with http.stream("POST", OPENROUTER_URL, json=body, headers=headers) as resp:
@@ -108,11 +149,9 @@ def _do_stream(
                 console.print(f"[red bold]Error {resp.status_code}:[/] {resp.text}")
                 sys.exit(1)
 
-            usage = {}
+            usage: dict = {}
             with Live(
-                Padding(_md(""), (1, 2)),
-                console=console,
-                refresh_per_second=8,
+                Padding(_md(""), (1, 2)), console=console, refresh_per_second=8,
             ) as live:
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
@@ -121,109 +160,31 @@ def _do_stream(
                     if payload == "[DONE]":
                         break
                     chunk = json.loads(payload)
-                    if "model" in chunk:
-                        used_model = chunk["model"]
-                    if "provider" in chunk:
-                        provider_name = chunk["provider"]
+                    used_model = chunk.get("model", used_model)
+                    provider_name = chunk.get("provider", provider_name)
                     if "usage" in chunk:
                         usage = chunk["usage"]
 
-                    choice = (chunk.get("choices") or [{}])[0]
-                    delta = choice.get("delta", {})
-
-                    # accumulate tool_calls deltas
-                    for tc in delta.get("tool_calls", []):
-                        idx = tc["index"]
-                        if idx not in tool_calls_acc:
-                            tool_calls_acc[idx] = {
-                                "id": tc.get("id", ""),
-                                "name": tc.get("function", {}).get("name", ""),
-                                "arguments": "",
-                            }
-                        else:
-                            if tc.get("id"):
-                                tool_calls_acc[idx]["id"] = tc["id"]
-                            if tc.get("function", {}).get("name"):
-                                tool_calls_acc[idx]["name"] = tc["function"]["name"]
-                        tool_calls_acc[idx]["arguments"] += tc.get("function", {}).get(
-                            "arguments", ""
-                        )
-
-                    text = delta.get("content", "")
+                    delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+                    text = _accumulate_delta(delta, tool_calls_acc)
                     if text:
-                        if first_token_time is None:
-                            first_token_time = time.perf_counter()
+                        first_token_time = first_token_time or time.perf_counter()
                         token_count += 1
                         collected += text
                         live.update(Padding(_md(collected), (1, 2)))
 
-    # ── handle tool calls ──
+    t_start = first_token_time or time.perf_counter()
+    t_end = time.perf_counter()
+    elapsed = t_end - t_start
+    gen_time = t_end - (first_token_time or t_end)
+
     if tool_calls_acc:
-        # build the assistant message with tool_calls
-        assistant_msg: dict = {
-            "role": "assistant",
-            "tool_calls": [
-                {
-                    "id": tc["id"],
-                    "type": "function",
-                    "function": {
-                        "name": tc["name"],
-                        "arguments": tc["arguments"],
-                    },
-                }
-                for tc in sorted(tool_calls_acc.values(), key=lambda x: x["id"])
-            ],
-        }
-        if collected:
-            assistant_msg["content"] = collected
-        messages.append(assistant_msg)
-
-        # execute each tool and append results
-        for tc in sorted(tool_calls_acc.values(), key=lambda x: x["id"]):
-            console.print(
-                f"  [dim]⟳ calling[/] [bold cyan]{tc['name']}[/]"
-                f"[dim]({json.loads(tc['arguments']).get('query', '')})[/]"
-            )
-            result = execute_tool(tc["name"], tc["arguments"])
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": result,
-                }
-            )
-
-        # re-stream with tool results
+        _handle_tool_calls(tool_calls_acc, messages, console)
         body["messages"] = messages
         return _do_stream(body, headers, messages, console, _md)
 
-    t_end = time.perf_counter()
-    elapsed = t_end - t_start
-    gen_time = t_end - (first_token_time or t_start)
     real_tokens = usage.get("completion_tokens", token_count)
-    tok_per_sec = real_tokens / gen_time if gen_time > 0 else 0
-
-    parts = [
-        ("✦ ", "bold magenta"),
-        (used_model, "bold cyan"),
-    ]
-    if provider_name:
-        parts += [("  via ", "dim"), (provider_name, "bold yellow")]
-    parts += [
-        ("  │  ", "dim"),
-        (f"{real_tokens}", "bold"),
-        (" tokens", "dim"),
-        ("  │  ", "dim"),
-        (f"{tok_per_sec:.1f}", "bold"),
-        (" tok/s", "dim"),
-        ("  │  ", "dim"),
-        (f"{elapsed:.1f}", "bold"),
-        ("s", "dim"),
-    ]
-    console.print(Rule(style="dim"))
-    console.print(Text.assemble(*parts))
-    console.print()
-
+    _print_stats(console, used_model, provider_name, elapsed, gen_time, real_tokens)
     return collected, used_model, provider_name, usage
 
 
