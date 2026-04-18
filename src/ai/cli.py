@@ -17,17 +17,8 @@ POPULAR_MODELS = [
 
 THEME_OPTIONS = [
     ("auto", "Detect system light/dark mode (default)"),
-    ("dark", "Force dark theme (monokai code highlighting)"),
-    ("light", "Force light theme (friendly code highlighting)"),
-    ("monokai", "Pygments: monokai (dark)"),
-    ("dracula", "Pygments: dracula (dark)"),
-    ("one-dark", "Pygments: one-dark (dark)"),
-    ("nord", "Pygments: nord (dark)"),
-    ("github-dark", "Pygments: github-dark (dark)"),
-    ("friendly", "Pygments: friendly (light)"),
-    ("tango", "Pygments: tango (light)"),
-    ("paraiso-light", "Pygments: paraiso-light (light)"),
-    ("solarized-light", "Pygments: solarized-light (light)"),
+    ("dark", "Force dark theme"),
+    ("light", "Force light theme"),
 ]
 
 CONFIG_KEYS = [
@@ -190,13 +181,13 @@ def config_set(key, value):
     \b
     Keys:
         model       OpenRouter model ID
-        theme       auto | dark | light | <pygments-theme>
+        theme       auto | dark | light
         provider    Provider routing as JSON
 
     \b
     Examples:
         ai config set model anthropic/claude-sonnet-4
-        ai config set theme dracula
+        ai config set theme dark
         ai config set provider '{"order": ["DeepInfra"]}'
     """
     import json
@@ -263,5 +254,4 @@ def config_themes():
         table.add_row(theme_id, desc, marker)
 
     console.print(table)
-    console.print(f"\n[dim]Set with:[/]  ai config set theme <name>")
-    console.print(f"[dim]Any Pygments theme works:[/] https://pygments.org/styles/\n")
+    console.print(f"\n[dim]Set with:[/]  ai config set theme <name>\n")

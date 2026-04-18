@@ -10,7 +10,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULTS = {
     "model": "x-ai/grok-4.1-fast",
     "provider": None,  # let OpenRouter pick; or set e.g. {"order": ["DeepInfra"]}
-    "theme": "auto",  # "auto", "dark", "light", or any pygments theme name
+    "theme": "auto",  # "auto", "dark", or "light"
 }
 
 
@@ -19,7 +19,9 @@ def is_dark_mode() -> bool:
         try:
             result = subprocess.run(
                 ["defaults", "read", "-g", "AppleInterfaceStyle"],
-                capture_output=True, text=True, timeout=2,
+                capture_output=True,
+                text=True,
+                timeout=2,
             )
             return result.stdout.strip().lower() == "dark"
         except Exception:

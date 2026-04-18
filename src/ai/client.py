@@ -69,13 +69,8 @@ def _resolve_theme(theme_setting: str) -> tuple[Theme, str]:
 
     if theme_setting == "auto":
         mode = "dark" if is_dark_mode() else "light"
-    elif theme_setting in ("dark", "light"):
-        mode = theme_setting
     else:
-        # treat as a raw pygments code theme name, detect markdown theme
-        mode = "dark" if is_dark_mode() else "light"
-        md_theme = DARK_THEME if mode == "dark" else LIGHT_THEME
-        return md_theme, theme_setting
+        mode = theme_setting
 
     md_theme = DARK_THEME if mode == "dark" else LIGHT_THEME
     return md_theme, CODE_THEMES[mode]
@@ -95,37 +90,60 @@ def _accumulate_delta(delta: dict, acc: ToolCall) -> str:
     return delta.get("content", "")
 
 
-def _handle_tool_calls(tc_acc: ToolCall, messages: list[dict], console: Console) -> None:
+def _handle_tool_calls(
+    tc_acc: ToolCall, messages: list[dict], console: Console
+) -> None:
     """Execute accumulated tool calls and append results to messages."""
     sorted_tcs = sorted(tc_acc.values(), key=lambda x: x["id"])
-    messages.append({
-        "role": "assistant",
-        "tool_calls": [
-            {"id": tc["id"], "type": "function",
-             "function": {"name": tc["name"], "arguments": tc["arguments"]}}
-            for tc in sorted_tcs
-        ],
-    })
+    messages.append(
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                }
+                for tc in sorted_tcs
+            ],
+        }
+    )
     for tc in sorted_tcs:
         query = json.loads(tc["arguments"]).get("query", "")
-        console.print(f"  [dim]⟳ calling[/] [bold cyan]{tc['name']}[/][dim]({query})[/]")
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tc["id"],
-            "content": execute_tool(tc["name"], tc["arguments"]),
-        })
+        console.print(
+            f"  [dim]⟳ calling[/] [bold cyan]{tc['name']}[/][dim]({query})[/]"
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": execute_tool(tc["name"], tc["arguments"]),
+            }
+        )
 
 
-def _print_stats(console: Console, used_model: str, provider_name: str,
-                 elapsed: float, gen_time: float, real_tokens: int) -> None:
+def _print_stats(
+    console: Console,
+    used_model: str,
+    provider_name: str,
+    elapsed: float,
+    gen_time: float,
+    real_tokens: int,
+) -> None:
     tok_per_sec = real_tokens / gen_time if gen_time > 0 else 0
     parts = [("✦ ", "bold magenta"), (used_model, "bold cyan")]
     if provider_name:
         parts += [("  via ", "dim"), (provider_name, "bold yellow")]
     parts += [
-        ("  │  ", "dim"), (f"{real_tokens}", "bold"), (" tokens", "dim"),
-        ("  │  ", "dim"), (f"{tok_per_sec:.1f}", "bold"), (" tok/s", "dim"),
-        ("  │  ", "dim"), (f"{elapsed:.1f}", "bold"), ("s", "dim"),
+        ("  │  ", "dim"),
+        (f"{real_tokens}", "bold"),
+        (" tokens", "dim"),
+        ("  │  ", "dim"),
+        (f"{tok_per_sec:.1f}", "bold"),
+        (" tok/s", "dim"),
+        ("  │  ", "dim"),
+        (f"{elapsed:.1f}", "bold"),
+        ("s", "dim"),
     ]
     console.print(Rule(style="dim"))
     console.print(Text.assemble(*parts))
@@ -152,7 +170,9 @@ def _do_stream(
 
             usage: dict = {}
             with Live(
-                Padding(_md(""), (1, 2)), console=console, refresh_per_second=8,
+                Padding(_md(""), (1, 2)),
+                console=console,
+                refresh_per_second=8,
             ) as live:
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
@@ -228,19 +248,21 @@ def stream_prompt(
     def _prep_math(text: str) -> str:
         # Wrap LaTeX display math ([ ... ]) and ($ ... $) in code blocks
         text = re.sub(
-            r'\\\[(.+?)\\\]',
-            lambda m: f'```\n{m.group(1).strip()}\n```',
-            text, flags=re.DOTALL,
+            r"\\\[(.+?)\\\]",
+            lambda m: f"```\n{m.group(1).strip()}\n```",
+            text,
+            flags=re.DOTALL,
         )
         text = re.sub(
-            r'\$\$(.+?)\$\$',
-            lambda m: f'```\n{m.group(1).strip()}\n```',
-            text, flags=re.DOTALL,
+            r"\$\$(.+?)\$\$",
+            lambda m: f"```\n{m.group(1).strip()}\n```",
+            text,
+            flags=re.DOTALL,
         )
         # Wrap inline math ($...$) in inline code
         text = re.sub(
-            r'(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)',
-            lambda m: f'`{m.group(1).strip()}`',
+            r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)",
+            lambda m: f"`{m.group(1).strip()}`",
             text,
         )
         return text
