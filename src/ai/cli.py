@@ -5,10 +5,11 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from ai.config import load_config, save_config, CONFIG_FILE
 from ai.client import stream_prompt
+from ai.config import CONFIG_FILE, load_config, save_config
 
 POPULAR_MODELS = [
+    ("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash"),
     ("x-ai/grok-4.1-fast", "Grok 4.1 Fast"),
     ("google/gemma-4-31b-it", "Gemma 4 31B Instruct"),
     ("minimax/minimax-m2.7", "MiniMax M2.7"),
