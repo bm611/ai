@@ -49,7 +49,7 @@ Config is stored at `~/.config/ai-cli/config.json`.
 
 | Key | Description | Default |
 |---|---|---|
-| `model` | OpenRouter model ID | `x-ai/grok-4.1-fast` |
+| `model` | OpenRouter model ID | `deepseek/deepseek-v4-flash` |
 | `theme` | `auto`, `dark`, `light`, or any Pygments style | `auto` |
 | `provider` | OpenRouter provider routing (JSON) | not set |
 

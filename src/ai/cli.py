@@ -10,10 +10,14 @@ from ai.config import CONFIG_FILE, load_config, save_config
 
 POPULAR_MODELS = [
     ("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash"),
-    ("x-ai/grok-4.1-fast", "Grok 4.1 Fast"),
+    ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
     ("google/gemma-4-31b-it", "Gemma 4 31B Instruct"),
-    ("minimax/minimax-m2.7", "MiniMax M2.7"),
     ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite Preview"),
+    ("mimo/mimo-v2.5", "MiMo V2.5 (https://api.xiaomimimo.com/v1/chat/completions)"),
+    (
+        "mimo/mimo-v2.5-pro",
+        "MiMo V2.5 Pro (https://api.xiaomimimo.com/v1/chat/completions)",
+    ),
 ]
 
 THEME_OPTIONS = [
@@ -23,7 +27,7 @@ THEME_OPTIONS = [
 ]
 
 CONFIG_KEYS = [
-    ("model", "OpenRouter model ID", "x-ai/grok-4.1-fast"),
+    ("model", "OpenRouter model ID", "deepseek/deepseek-v4-flash"),
     ("theme", "Color theme for output", "auto"),
     ("provider", "OpenRouter provider routing (JSON)", '{"order": ["DeepInfra"]}'),
 ]
@@ -229,7 +233,9 @@ def config_models():
     cfg = load_config()
     current = cfg.get("model", "")
 
-    console.print("\n[bold]Popular models[/] [dim](use any OpenRouter model ID)[/]\n")
+    console.print(
+        "\n[bold]Popular models[/] [dim](use OpenRouter IDs, or MiMo V2.5 with MIMO_API_KEY)[/]\n"
+    )
 
     table = Table(show_header=True, header_style="bold cyan", padding=(0, 2))
     table.add_column("Model", style="bold")
@@ -243,6 +249,7 @@ def config_models():
     console.print(table)
     console.print(f"\n[dim]Set with:[/]  ai config set model <model-id>")
     console.print(f"[dim]Browse all:[/] https://openrouter.ai/models\n")
+    console.print(f"[dim]MiMo API:[/] https://api.xiaomimimo.com/v1/chat/completions\n")
 
 
 @config.command("themes")

@@ -51,6 +51,17 @@ CODE_THEMES = {
 }
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+MIMO_URL = "https://api.xiaomimimo.com/v1/chat/completions"
+
+
+def _is_mimo_model(model: str) -> bool:
+    return model.startswith("mimo/") or model.startswith("mimo-")
+
+
+def _api_model_name(model: str) -> str:
+    if model.startswith("mimo/"):
+        return model.removeprefix("mimo/")
+    return model
 
 
 def _get_api_key() -> str:
@@ -58,6 +69,17 @@ def _get_api_key() -> str:
     if not key:
         Console(stderr=True).print(
             "[red bold]Error:[/] OPENROUTER_API_KEY environment variable is not set.\n"
+            "Export it or add it to your shell profile."
+        )
+        sys.exit(1)
+    return key
+
+
+def _get_mimo_api_key() -> str:
+    key = os.environ.get("MIMO_API_KEY")
+    if not key:
+        Console(stderr=True).print(
+            "[red bold]Error:[/] MIMO_API_KEY environment variable is not set.\n"
             "Export it or add it to your shell profile."
         )
         sys.exit(1)
@@ -83,13 +105,13 @@ ToolCall = dict[int, dict]  # index -> {id, name, arguments}
 
 def _accumulate_delta(delta: dict, acc: ToolCall) -> str:
     """Merge tool_call deltas and return text content."""
-    for tc in delta.get("tool_calls", []):
+    for tc in delta.get("tool_calls") or []:
         idx = tc["index"]
         acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
         acc[idx]["id"] = tc.get("id") or acc[idx]["id"]
         acc[idx]["name"] = tc.get("function", {}).get("name") or acc[idx]["name"]
         acc[idx]["arguments"] += tc.get("function", {}).get("arguments", "")
-    return delta.get("content", "")
+    return delta.get("content") or ""
 
 
 def _handle_tool_calls(
@@ -153,6 +175,7 @@ def _print_stats(
 
 
 def _do_stream(
+    url: str,
     body: dict,
     headers: dict,
     messages: list[dict],
@@ -164,7 +187,7 @@ def _do_stream(
     provider_name, tool_calls_acc = "", {}
 
     with httpx.Client(timeout=120) as http:
-        with http.stream("POST", OPENROUTER_URL, json=body, headers=headers) as resp:
+        with http.stream("POST", url, json=body, headers=headers) as resp:
             if resp.status_code != 200:
                 resp.read()
                 console.print(f"[red bold]Error {resp.status_code}:[/] {resp.text}")
@@ -204,7 +227,7 @@ def _do_stream(
     if tool_calls_acc:
         _handle_tool_calls(tool_calls_acc, messages, console)
         body["messages"] = messages
-        return _do_stream(body, headers, messages, console, _md)
+        return _do_stream(url, body, headers, messages, console, _md)
 
     real_tokens = usage.get("completion_tokens", token_count)
     _print_stats(console, used_model, provider_name, elapsed, gen_time, real_tokens)
@@ -218,12 +241,20 @@ def stream_prompt(
     theme: str = "auto",
     chat: bool = False,
 ) -> None:
-    headers = {
-        "Authorization": f"Bearer {_get_api_key()}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/ai-cli",
-        "X-Title": "ai-cli",
-    }
+    if _is_mimo_model(model):
+        url = MIMO_URL
+        headers = {
+            "api-key": _get_mimo_api_key(),
+            "Content-Type": "application/json",
+        }
+    else:
+        url = OPENROUTER_URL
+        headers = {
+            "Authorization": f"Bearer {_get_api_key()}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/ai-cli",
+            "X-Title": "ai-cli",
+        }
 
     from datetime import date
 
@@ -236,12 +267,13 @@ def stream_prompt(
     ]
 
     body: dict = {
-        "model": model,
+        "model": _api_model_name(model),
         "messages": messages,
         "stream": True,
         "stream_options": {"include_usage": True},
-        "tools": TOOLS,
     }
+    if not _is_mimo_model(model):
+        body["tools"] = TOOLS
     if provider:
         body["provider"] = provider
 
@@ -289,7 +321,7 @@ def stream_prompt(
         console.print(styled)
     console.print(Rule(style="dim"))
 
-    collected, _, _, _ = _do_stream(body, headers, messages, console, _md)
+    collected, _, _, _ = _do_stream(url, body, headers, messages, console, _md)
 
     if not chat:
         return
@@ -313,4 +345,4 @@ def stream_prompt(
         messages.append({"role": "user", "content": followup})
         body["messages"] = messages
 
-        collected, _, _, _ = _do_stream(body, headers, messages, console, _md)
+        collected, _, _, _ = _do_stream(url, body, headers, messages, console, _md)

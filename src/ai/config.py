@@ -8,7 +8,7 @@ CONFIG_DIR = Path.home() / ".config" / "ai-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULTS = {
-    "model": "x-ai/grok-4.1-fast",
+    "model": "deepseek/deepseek-v4-flash",
     "provider": None,  # let OpenRouter pick; or set e.g. {"order": ["DeepInfra"]}
     "theme": "auto",  # "auto", "dark", or "light"
 }
