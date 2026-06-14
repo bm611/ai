@@ -24,6 +24,7 @@ THEME_OPTIONS = [
     ("auto", "Detect system light/dark mode (default)"),
     ("dark", "Force dark theme"),
     ("light", "Force light theme"),
+    ("retro", "Green-phosphor CRT terminal theme"),
 ]
 
 CONFIG_KEYS = [
@@ -217,7 +218,7 @@ def config_set(key, value):
     \b
     Keys:
         model            OpenRouter model ID
-        theme            auto | dark | light
+        theme            auto | dark | light | retro
         provider         Provider routing as JSON
         ensemble_models  Models for -e (JSON list or comma-separated)
         consensus_model  Model that consolidates ensemble answers

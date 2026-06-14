@@ -49,9 +49,32 @@ LIGHT_THEME = Theme(
     }
 )
 
+RETRO_THEME = Theme(
+    {
+        "markdown.h1": "bold green1",
+        "markdown.h2": "bold chartreuse1",
+        "markdown.h3": "bold green_yellow",
+        "markdown.h4": "bold yellow",
+        "markdown.link": "bright_yellow underline",
+        "markdown.item.bullet": "green1",
+        "markdown.item.number": "green1",
+        "markdown.block_quote": "italic green3",
+        "markdown.code": "bold green1 on grey0",
+        "markdown.hr": "green1",
+    }
+)
+
 CODE_THEMES = {
     "dark": "monokai",
     "light": "friendly",
+    "retro": "rrt",
+}
+
+# Banner colour per resolved mode.
+BANNER_STYLES = {
+    "dark": "bold magenta",
+    "light": "bold dark_magenta",
+    "retro": "bold green1",
 }
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -127,7 +150,7 @@ def _build_request(
     return url, headers, body
 
 
-def _resolve_theme(theme_setting: str) -> tuple[Theme, str]:
+def _resolve_theme(theme_setting: str) -> tuple[Theme, str, str]:
     from ai.config import is_dark_mode
 
     if theme_setting == "auto":
@@ -137,8 +160,8 @@ def _resolve_theme(theme_setting: str) -> tuple[Theme, str]:
     else:
         mode = "dark"
 
-    md_theme = DARK_THEME if mode == "dark" else LIGHT_THEME
-    return md_theme, CODE_THEMES[mode]
+    md_themes = {"dark": DARK_THEME, "light": LIGHT_THEME, "retro": RETRO_THEME}
+    return md_themes[mode], CODE_THEMES[mode], mode
 
 
 ToolCall = dict[int, dict]  # index -> {id, name, arguments}
@@ -298,17 +321,17 @@ def _prep_math(text: str) -> str:
     return text
 
 
-def _make_renderer(theme: str) -> tuple[Console, callable]:
-    """Return a themed Console and an _md(text) -> Markdown renderer."""
-    md_theme, code_theme = _resolve_theme(theme)
+def _make_renderer(theme: str) -> tuple[Console, callable, str]:
+    """Return a themed Console, an _md(text) -> Markdown renderer, and banner style."""
+    md_theme, code_theme, mode = _resolve_theme(theme)
 
     def _md(text: str) -> Markdown:
         return Markdown(_prep_math(text), code_theme=code_theme)
 
-    return Console(theme=md_theme), _md
+    return Console(theme=md_theme), _md, BANNER_STYLES[mode]
 
 
-def _print_banner(console: Console) -> None:
+def _print_banner(console: Console, style: str = "bold magenta") -> None:
     logo = [
         r"  __                       .__              .__           .__            __   ",
         r"_/  |_  ___________  _____ |__| ____ _____  |  |     ____ |  |__ _____ _/  |_ ",
@@ -319,7 +342,7 @@ def _print_banner(console: Console) -> None:
     ]
     console.print()
     for line in logo:
-        console.print(Text(line, style="bold magenta"))
+        console.print(Text(line, style=style))
     console.print(Rule(style="dim"))
 
 
@@ -342,8 +365,8 @@ def stream_prompt(
 
     url, headers, body = _build_request(model, messages, provider, stream=True, tools=True)
 
-    console, _md = _make_renderer(theme)
-    _print_banner(console)
+    console, _md, banner_style = _make_renderer(theme)
+    _print_banner(console, banner_style)
 
     collected, _, _, _ = _do_stream(url, body, headers, messages, console, _md)
 
@@ -476,8 +499,8 @@ def ensemble_prompt(
         {"role": "user", "content": prompt},
     ]
 
-    console, _md = _make_renderer(theme)
-    _print_banner(console)
+    console, _md, banner_style = _make_renderer(theme)
+    _print_banner(console, banner_style)
 
     states = asyncio.run(_run_ensemble(base_messages, models, provider, console))
 

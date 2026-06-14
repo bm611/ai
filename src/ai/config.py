@@ -10,7 +10,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULTS = {
     "model": "deepseek/deepseek-v4-flash",
     "provider": None,  # let OpenRouter pick; or set e.g. {"order": ["DeepInfra"]}
-    "theme": "auto",  # "auto", "dark", or "light"
+    "theme": "auto",  # "auto", "dark", "light", or "retro"
     # ensemble mode: query these models in parallel, then consolidate
     "ensemble_models": [
         "deepseek/deepseek-v4-flash",
