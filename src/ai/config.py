@@ -11,6 +11,12 @@ DEFAULTS = {
     "model": "deepseek/deepseek-v4-flash",
     "provider": None,  # let OpenRouter pick; or set e.g. {"order": ["DeepInfra"]}
     "theme": "auto",  # "auto", "dark", or "light"
+    # ensemble mode: query these models in parallel, then consolidate
+    "ensemble_models": [
+        "deepseek/deepseek-v4-flash",
+        "google/gemini-3.1-flash-lite-preview",
+    ],
+    "consensus_model": "deepseek/deepseek-v4-pro",
 }
 
 
@@ -40,7 +46,12 @@ def is_dark_mode() -> bool:
 
 def _ensure_config() -> dict:
     if CONFIG_FILE.exists():
-        return json.loads(CONFIG_FILE.read_text())
+        cfg = json.loads(CONFIG_FILE.read_text())
+        # backfill any keys added in newer versions
+        merged = {**DEFAULTS, **cfg}
+        if merged != cfg:
+            save_config(merged)
+        return merged
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(DEFAULTS, indent=2) + "\n")
     return dict(DEFAULTS)

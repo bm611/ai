@@ -32,6 +32,27 @@ ai -m anthropic/claude-sonnet-4 "write a haiku"
 # Pipe from stdin
 pbpaste | ai "review this code"
 cat log.txt | ai "summarize errors"
+
+# Ensemble mode: query multiple models in parallel, then consolidate
+ai -e "what is the best approach to rate limiting?"
+```
+
+## Ensemble mode
+
+`-e/--ensemble` sends your prompt to several models **in parallel**, shows a live
+status panel as each one responds, prints each model's answer, then uses a
+"consensus" model to synthesize a single best answer.
+
+```bash
+ai -e "design a caching strategy for a read-heavy API"
+ai -e -m anthropic/claude-sonnet-4 "..."   # -m overrides the consensus model
+```
+
+Configure which models are used:
+
+```bash
+ai config set ensemble_models 'deepseek/deepseek-v4-flash,google/gemini-3.1-flash-lite-preview'
+ai config set consensus_model deepseek/deepseek-v4-pro
 ```
 
 ## Configuration
@@ -52,6 +73,8 @@ Config is stored at `~/.config/ai-cli/config.json`.
 | `model` | OpenRouter model ID | `deepseek/deepseek-v4-flash` |
 | `theme` | `auto`, `dark`, `light`, or any Pygments style | `auto` |
 | `provider` | OpenRouter provider routing (JSON) | not set |
+| `ensemble_models` | Models queried in parallel for `-e` (JSON list or comma-separated) | `deepseek/deepseek-v4-flash`, `google/gemini-3.1-flash-lite-preview` |
+| `consensus_model` | Model that consolidates ensemble answers | `deepseek/deepseek-v4-pro` |
 
 ## Themes
 
