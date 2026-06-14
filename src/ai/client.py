@@ -69,8 +69,10 @@ def _resolve_theme(theme_setting: str) -> tuple[Theme, str]:
 
     if theme_setting == "auto":
         mode = "dark" if is_dark_mode() else "light"
-    else:
+    elif theme_setting in CODE_THEMES:
         mode = theme_setting
+    else:
+        mode = "dark"
 
     md_theme = DARK_THEME if mode == "dark" else LIGHT_THEME
     return md_theme, CODE_THEMES[mode]

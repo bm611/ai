@@ -23,10 +23,12 @@ THEME_OPTIONS = [
 ]
 
 CONFIG_KEYS = [
-    ("model", "OpenRouter model ID", "openai/gpt-4o-mini"),
+    ("model", "OpenRouter model ID", "x-ai/grok-4.1-fast"),
     ("theme", "Color theme for output", "auto"),
     ("provider", "OpenRouter provider routing (JSON)", '{"order": ["DeepInfra"]}'),
 ]
+
+VALID_THEMES = {theme for theme, _ in THEME_OPTIONS}
 
 
 def _read_file(path_str: str) -> str:
@@ -202,6 +204,13 @@ def config_set(key, value):
         sys.exit(1)
 
     cfg = load_config()
+    if key == "theme" and value not in VALID_THEMES:
+        Console(stderr=True).print(
+            f"[red bold]Error:[/] unknown theme [bold]{value}[/]. "
+            f"Valid themes: {', '.join(sorted(VALID_THEMES))}"
+        )
+        sys.exit(1)
+
     if key == "provider":
         try:
             value = json.loads(value)
