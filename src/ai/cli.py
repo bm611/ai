@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -56,6 +57,18 @@ def _ensemble_models(cfg: dict) -> list[str]:
     if isinstance(raw, str):
         return [m.strip() for m in raw.split(",") if m.strip()]
     return list(raw)
+
+
+def _marked_table(rows: list[tuple[str, str]], current: str) -> Table:
+    """Build a two-column (id, description) table with an 'active' marker."""
+    table = Table(show_header=True, header_style="bold cyan", padding=(0, 2))
+    table.add_column("Name", style="bold")
+    table.add_column("Description", style="dim")
+    table.add_column("", justify="right")
+    for item_id, desc in rows:
+        marker = "[green]● active[/]" if item_id == current else ""
+        table.add_row(item_id, desc, marker)
+    return table
 
 
 class PromptGroup(click.Group):
@@ -189,8 +202,6 @@ def config():
 @config.command("show")
 def config_show():
     """Show current config values and file location."""
-    import json
-
     cfg = load_config()
     console = Console()
     console.print(f"\n[dim]Config file:[/] {CONFIG_FILE}\n")
@@ -231,8 +242,6 @@ def config_set(key, value):
         ai config set ensemble_models 'deepseek/deepseek-v4-flash,x-ai/grok-4'
         ai config set consensus_model deepseek/deepseek-v4-pro
     """
-    import json
-
     valid_keys = {k for k, _, _ in CONFIG_KEYS}
     if key not in valid_keys:
         Console(stderr=True).print(
@@ -277,17 +286,7 @@ def config_models():
     console.print(
         "\n[bold]Popular models[/] [dim](use OpenRouter IDs, or MiMo V2.5 with MIMO_API_KEY)[/]\n"
     )
-
-    table = Table(show_header=True, header_style="bold cyan", padding=(0, 2))
-    table.add_column("Model", style="bold")
-    table.add_column("Description", style="dim")
-    table.add_column("", justify="right")
-
-    for model_id, desc in POPULAR_MODELS:
-        marker = "[green]● active[/]" if model_id == current else ""
-        table.add_row(model_id, desc, marker)
-
-    console.print(table)
+    console.print(_marked_table(POPULAR_MODELS, current))
     console.print(f"\n[dim]Set with:[/]  ai config set model <model-id>")
     console.print(f"[dim]Browse all:[/] https://openrouter.ai/models\n")
     console.print(f"[dim]MiMo API:[/] https://api.xiaomimimo.com/v1/chat/completions\n")
@@ -301,15 +300,5 @@ def config_themes():
     current = cfg.get("theme", "auto")
 
     console.print("\n[bold]Available themes[/]\n")
-
-    table = Table(show_header=True, header_style="bold cyan", padding=(0, 2))
-    table.add_column("Theme", style="bold")
-    table.add_column("Description", style="dim")
-    table.add_column("", justify="right")
-
-    for theme_id, desc in THEME_OPTIONS:
-        marker = "[green]● active[/]" if theme_id == current else ""
-        table.add_row(theme_id, desc, marker)
-
-    console.print(table)
+    console.print(_marked_table(THEME_OPTIONS, current))
     console.print(f"\n[dim]Set with:[/]  ai config set theme <name>\n")

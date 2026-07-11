@@ -19,63 +19,72 @@ from rich.theme import Theme
 
 from ai.tools import TOOLS, execute_tool
 
-DARK_THEME = Theme(
-    {
-        "markdown.h1": "bold bright_magenta",
-        "markdown.h2": "bold bright_cyan",
-        "markdown.h3": "bold bright_green",
-        "markdown.h4": "bold bright_yellow",
-        "markdown.link": "bright_blue underline",
-        "markdown.item.bullet": "bright_cyan",
-        "markdown.item.number": "bright_cyan",
-        "markdown.block_quote": "italic magenta",
-        "markdown.code": "bright_green on grey11",
-        "markdown.hr": "bright_magenta",
-    }
-)
-
-LIGHT_THEME = Theme(
-    {
-        "markdown.h1": "bold dark_magenta",
-        "markdown.h2": "bold dark_cyan",
-        "markdown.h3": "bold green",
-        "markdown.h4": "bold dark_orange",
-        "markdown.link": "blue underline",
-        "markdown.item.bullet": "dark_cyan",
-        "markdown.item.number": "dark_cyan",
-        "markdown.block_quote": "italic dark_magenta",
-        "markdown.code": "dark_green on grey93",
-        "markdown.hr": "dark_magenta",
-    }
-)
-
-RETRO_THEME = Theme(
-    {
-        "markdown.h1": "bold green1",
-        "markdown.h2": "bold chartreuse1",
-        "markdown.h3": "bold green_yellow",
-        "markdown.h4": "bold yellow",
-        "markdown.link": "bright_yellow underline",
-        "markdown.item.bullet": "green1",
-        "markdown.item.number": "green1",
-        "markdown.block_quote": "italic green3",
-        "markdown.code": "bold green1 on grey0",
-        "markdown.hr": "green1",
-    }
-)
-
-CODE_THEMES = {
-    "dark": "monokai",
-    "light": "friendly",
-    "retro": "rrt",
+# Per-mode markdown styling, code-highlight theme, and banner colour.
+MODES = {
+    "dark": {
+        "code_theme": "monokai",
+        "banner": "bold magenta",
+        "colors": {
+            "h1": "bright_magenta",
+            "h2": "bright_cyan",
+            "h3": "bright_green",
+            "h4": "bright_yellow",
+            "link": "bright_blue",
+            "item": "bright_cyan",
+            "quote": "magenta",
+            "code": "bright_green on grey11",
+            "hr": "bright_magenta",
+        },
+    },
+    "light": {
+        "code_theme": "friendly",
+        "banner": "bold dark_magenta",
+        "colors": {
+            "h1": "dark_magenta",
+            "h2": "dark_cyan",
+            "h3": "green",
+            "h4": "dark_orange",
+            "link": "blue",
+            "item": "dark_cyan",
+            "quote": "dark_magenta",
+            "code": "dark_green on grey93",
+            "hr": "dark_magenta",
+        },
+    },
+    "retro": {
+        "code_theme": "rrt",
+        "banner": "bold green1",
+        "colors": {
+            "h1": "green1",
+            "h2": "chartreuse1",
+            "h3": "green_yellow",
+            "h4": "yellow",
+            "link": "bright_yellow",
+            "item": "green1",
+            "quote": "green3",
+            "code": "bold green1 on grey0",
+            "hr": "green1",
+        },
+    },
 }
 
-# Banner colour per resolved mode.
-BANNER_STYLES = {
-    "dark": "bold magenta",
-    "light": "bold dark_magenta",
-    "retro": "bold green1",
-}
+
+def _markdown_theme(colors: dict) -> Theme:
+    return Theme(
+        {
+            "markdown.h1": f"bold {colors['h1']}",
+            "markdown.h2": f"bold {colors['h2']}",
+            "markdown.h3": f"bold {colors['h3']}",
+            "markdown.h4": f"bold {colors['h4']}",
+            "markdown.link": f"{colors['link']} underline",
+            "markdown.item.bullet": colors["item"],
+            "markdown.item.number": colors["item"],
+            "markdown.block_quote": f"italic {colors['quote']}",
+            "markdown.code": colors["code"],
+            "markdown.hr": colors["hr"],
+        }
+    )
+
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MIMO_URL = "https://api.xiaomimimo.com/v1/chat/completions"
@@ -91,22 +100,11 @@ def _api_model_name(model: str) -> str:
     return model
 
 
-def _get_api_key() -> str:
-    key = os.environ.get("OPENROUTER_API_KEY")
+def _get_key(env_var: str) -> str:
+    key = os.environ.get(env_var)
     if not key:
         Console(stderr=True).print(
-            "[red bold]Error:[/] OPENROUTER_API_KEY environment variable is not set.\n"
-            "Export it or add it to your shell profile."
-        )
-        sys.exit(1)
-    return key
-
-
-def _get_mimo_api_key() -> str:
-    key = os.environ.get("MIMO_API_KEY")
-    if not key:
-        Console(stderr=True).print(
-            "[red bold]Error:[/] MIMO_API_KEY environment variable is not set.\n"
+            f"[red bold]Error:[/] {env_var} environment variable is not set.\n"
             "Export it or add it to your shell profile."
         )
         sys.exit(1)
@@ -124,13 +122,13 @@ def _build_request(
     if _is_mimo_model(model):
         url = MIMO_URL
         headers = {
-            "api-key": _get_mimo_api_key(),
+            "api-key": _get_key("MIMO_API_KEY"),
             "Content-Type": "application/json",
         }
     else:
         url = OPENROUTER_URL
         headers = {
-            "Authorization": f"Bearer {_get_api_key()}",
+            "Authorization": f"Bearer {_get_key('OPENROUTER_API_KEY')}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/ai-cli",
             "X-Title": "ai-cli",
@@ -155,13 +153,13 @@ def _resolve_theme(theme_setting: str) -> tuple[Theme, str, str]:
 
     if theme_setting == "auto":
         mode = "dark" if is_dark_mode() else "light"
-    elif theme_setting in CODE_THEMES:
+    elif theme_setting in MODES:
         mode = theme_setting
     else:
         mode = "dark"
 
-    md_themes = {"dark": DARK_THEME, "light": LIGHT_THEME, "retro": RETRO_THEME}
-    return md_themes[mode], CODE_THEMES[mode], mode
+    spec = MODES[mode]
+    return _markdown_theme(spec["colors"]), spec["code_theme"], mode
 
 
 ToolCall = dict[int, dict]  # index -> {id, name, arguments}
@@ -328,7 +326,7 @@ def _make_renderer(theme: str) -> tuple[Console, callable, str]:
     def _md(text: str) -> Markdown:
         return Markdown(_prep_math(text), code_theme=code_theme)
 
-    return Console(theme=md_theme), _md, BANNER_STYLES[mode]
+    return Console(theme=md_theme), _md, MODES[mode]["banner"]
 
 
 def _print_banner(console: Console, style: str = "bold magenta") -> None:
