@@ -11,6 +11,7 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.panel import Panel
+from rich.prompt import Prompt
 from rich.rule import Rule
 from rich.spinner import Spinner
 from rich.table import Table
@@ -18,6 +19,21 @@ from rich.text import Text
 from rich.theme import Theme
 
 from ai.tools import TOOLS, execute_tool
+
+# When True (non-TTY stdout or --plain), suppress the banner, spinner,
+# colored panels and stats bar so output is pipe-friendly raw markdown.
+_PLAIN = False
+_SHOW_BANNER = True
+
+
+def set_plain(plain: bool) -> None:
+    global _PLAIN
+    _PLAIN = plain
+
+
+def set_show_banner(show: bool) -> None:
+    global _SHOW_BANNER
+    _SHOW_BANNER = show
 
 # Per-mode markdown styling, code-highlight theme, and banner colour.
 MODES = {
@@ -88,6 +104,51 @@ def _markdown_theme(colors: dict) -> Theme:
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MIMO_URL = "https://api.xiaomimimo.com/v1/chat/completions"
+
+# Human-readable hints for common HTTP failures.
+_ERROR_HINTS = {
+    400: "Request rejected — check the model ID and parameters.",
+    401: "Authentication failed — check your API key environment variable.",
+    402: "Out of credits — top up your account and retry.",
+    403: "Access denied for this key/model.",
+    404: "Model not found — run `ai config models` for popular IDs.",
+    408: "Upstream timeout — try again.",
+    429: "Rate limited — wait a moment or route to another provider.",
+    502: "Bad gateway — the upstream provider may be down.",
+    503: "Service unavailable — try again shortly.",
+}
+
+
+def _http_error_detail(status_code: int, body: str) -> tuple[str, str]:
+    """Return (detail, hint) extracted from a failed HTTP response."""
+    detail = ""
+    try:
+        payload = json.loads(body)
+        err = payload.get("error")
+        detail = (err.get("message") if isinstance(err, dict) else "") \
+            or payload.get("message") or ""
+    except json.JSONDecodeError:
+        pass
+    if not detail:
+        detail = (body or "").strip()
+    return detail[:300], _ERROR_HINTS.get(status_code, "")
+
+
+def _print_http_error(console: Console, status_code: int, body: str) -> None:
+    """Render a friendly error panel and exit."""
+    detail, hint = _http_error_detail(status_code, body)
+    content = Text()
+    content.append(f"HTTP {status_code}", style="bold red")
+    if detail:
+        content.append("\n")
+        content.append(detail)
+    if hint:
+        content.append("\n\n")
+        content.append(hint, style="yellow")
+    console.print(
+        Panel(content, title="request failed", title_align="left", border_style="red")
+    )
+    sys.exit(1)
 
 
 def _is_mimo_model(model: str) -> bool:
@@ -215,7 +276,10 @@ def _print_stats(
     elapsed: float,
     gen_time: float,
     real_tokens: int,
+    ttft: float | None = None,
 ) -> None:
+    if _PLAIN:
+        return
     tok_per_sec = real_tokens / gen_time if gen_time > 0 else 0
     parts = [("✦ ", "bold magenta"), (used_model, "bold cyan")]
     if provider_name:
@@ -224,6 +288,14 @@ def _print_stats(
         ("  │  ", "dim"),
         (f"{real_tokens}", "bold"),
         (" tokens", "dim"),
+    ]
+    if ttft is not None:
+        parts += [
+            ("  │  ", "dim"),
+            (f"{ttft:.2f}", "bold"),
+            ("s to first token", "dim"),
+        ]
+    parts += [
         ("  │  ", "dim"),
         (f"{tok_per_sec:.1f}", "bold"),
         (" tok/s", "dim"),
@@ -234,6 +306,11 @@ def _print_stats(
     console.print(Rule(style="dim"))
     console.print(Text.assemble(*parts))
     console.print()
+
+
+# Re-parsing the full markdown on every chunk gets expensive on long answers;
+# throttle re-renders once the response grows past this many characters.
+_STREAM_RENDER_THRESHOLD = 800
 
 
 def _do_stream(
@@ -247,20 +324,17 @@ def _do_stream(
     """Stream a single chat completion, handling tool calls automatically."""
     collected, used_model, first_token_time, token_count = "", body["model"], None, 0
     provider_name, tool_calls_acc = "", {}
+    request_start = time.perf_counter()
 
     with httpx.Client(timeout=120) as http:
         with http.stream("POST", url, json=body, headers=headers) as resp:
             if resp.status_code != 200:
                 resp.read()
-                console.print(f"[red bold]Error {resp.status_code}:[/] {resp.text}")
-                sys.exit(1)
+                _print_http_error(console, resp.status_code, resp.text)
 
             usage: dict = {}
-            with Live(
-                Padding(_md(""), (1, 2)),
-                console=console,
-                refresh_per_second=8,
-            ) as live:
+            if _PLAIN:
+                # Raw output: stream text verbatim as it arrives.
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -269,22 +343,61 @@ def _do_stream(
                         break
                     chunk = json.loads(payload)
                     used_model = chunk.get("model", used_model)
-                    provider_name = chunk.get("provider", provider_name)
-                    if "usage" in chunk:
+                    if "provider" in chunk:
+                        provider_name = chunk["provider"]
+                    if chunk.get("usage"):
                         usage = chunk["usage"]
-
                     delta = (chunk.get("choices") or [{}])[0].get("delta", {})
                     text = _accumulate_delta(delta, tool_calls_acc)
                     if text:
-                        first_token_time = first_token_time or time.perf_counter()
-                        token_count += 1
                         collected += text
-                        live.update(Padding(_md(collected), (1, 2)))
+                        print(text, end="", flush=True)
+                        if first_token_time is None:
+                            first_token_time = time.perf_counter()
+                if collected:
+                    print()
+            else:
+                # Transient status while waiting for the first token, so the
+                # UI isn't just a blank box during model warm-up.
+                live_ctx = Live(
+                    Text("  thinking…", style="dim italic"),
+                    console=console,
+                    refresh_per_second=8,
+                )
+                with live_ctx as live:
+                    last_len = 0
+                    for line in resp.iter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        payload = line.removeprefix("data: ").strip()
+                        if payload == "[DONE]":
+                            break
+                        chunk = json.loads(payload)
+                        used_model = chunk.get("model", used_model)
+                        provider_name = chunk.get("provider", provider_name)
+                        if chunk.get("usage"):
+                            usage = chunk["usage"]
+
+                        delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+                        text = _accumulate_delta(delta, tool_calls_acc)
+                        if text and first_token_time is None:
+                            first_token_time = time.perf_counter()
+                        if text:
+                            token_count += 1
+                            collected += text
+                            grown = len(collected) - last_len
+                            if (
+                                len(collected) < _STREAM_RENDER_THRESHOLD
+                                or grown >= _STREAM_RENDER_THRESHOLD // 4
+                            ):
+                                live.update(Padding(_md(collected), (1, 2)))
+                                last_len = len(collected)
 
     t_start = first_token_time or time.perf_counter()
     t_end = time.perf_counter()
     elapsed = t_end - t_start
     gen_time = t_end - (first_token_time or t_end)
+    ttft = (first_token_time - request_start) if first_token_time else None
 
     if tool_calls_acc:
         _handle_tool_calls(tool_calls_acc, messages, console)
@@ -292,7 +405,7 @@ def _do_stream(
         return _do_stream(url, body, headers, messages, console, _md)
 
     real_tokens = usage.get("completion_tokens", token_count)
-    _print_stats(console, used_model, provider_name, elapsed, gen_time, real_tokens)
+    _print_stats(console, used_model, provider_name, elapsed, gen_time, real_tokens, ttft)
     return collected, used_model, provider_name, usage
 
 
@@ -330,6 +443,8 @@ def _make_renderer(theme: str) -> tuple[Console, callable, str]:
 
 
 def _print_banner(console: Console, style: str = "bold magenta") -> None:
+    if not _SHOW_BANNER or _PLAIN:
+        return
     logo = [
         r"  __                       .__              .__           .__            __   ",
         r"_/  |_  ___________  _____ |__| ____ _____  |  |     ____ |  |__ _____ _/  |_ ",
@@ -373,9 +488,9 @@ def stream_prompt(
 
     while True:
         try:
-            followup = input(
-                "\n\033[1;36mFollow-up\033[0m\033[2m (or \033[1mq\033[0m\033[2m to quit):\033[0m "
-            ).strip()
+            followup = Prompt.ask(
+                "\n[bold cyan]Follow-up[/] [dim](or [bold]q[/] to quit)[/]"
+            )
         except (EOFError, KeyboardInterrupt):
             print()
             return
@@ -410,7 +525,12 @@ async def _query_model(model: str, messages: list[dict], provider: dict | None, 
             resp = await http.post(url, json=body, headers=headers)
             if resp.status_code != 200:
                 state["status"] = "error"
-                state["error"] = f"HTTP {resp.status_code}"
+                detail, hint = _http_error_detail(resp.status_code, resp.text)
+                state["error"] = (
+                    f"HTTP {resp.status_code}"
+                    + (f": {detail}" if detail else "")
+                    + (f" — {hint}" if hint and not detail else "")
+                )
                 return
             data = resp.json()
             choice = (data.get("choices") or [{}])[0]
@@ -425,16 +545,24 @@ async def _query_model(model: str, messages: list[dict], provider: dict | None, 
         state["elapsed"] = time.perf_counter() - start
 
 
-def _ensemble_status_panel(states: list[dict], title: str) -> Panel:
+def _ensemble_status_panel(
+    states: list[dict], title: str, started: float | None = None
+) -> Panel:
     grid = Table.grid(padding=(0, 1))
     grid.add_column(width=2)
     grid.add_column(width=10)
     grid.add_column()
     for i, st in enumerate(states, 1):
         status = st["status"]
+        name = _short(st["model"])
         if status == "responding":
             icon = Spinner("dots", style="cyan")
-            detail = Text("responding…", style="dim")
+            suffix = (
+                f" · {time.perf_counter() - started:.0f}s"
+                if started is not None
+                else ""
+            )
+            detail = Text(f"responding{suffix}…", style="dim")
         elif status == "done":
             tokens = st.get("usage", {}).get("completion_tokens", 0)
             icon = Text("✓", style="bold green")
@@ -446,8 +574,8 @@ def _ensemble_status_panel(states: list[dict], title: str) -> Panel:
             detail = Text(st.get("error", "error"), style="red")
         grid.add_row(
             icon,
-            Text(f"Model {i}", style="bold"),
-            Text.assemble((_short(st["model"]) + "  ", "cyan"), detail),
+            Text(name, style="bold cyan"),
+            detail,
         )
     return Panel(grid, title=title, title_align="left", border_style="dim", padding=(1, 2))
 
@@ -464,14 +592,20 @@ async def _run_ensemble(
         for i, m in enumerate(models)
     ]
 
+    if _PLAIN:
+        # No live panel — just wait quietly for all models to finish.
+        await asyncio.gather(*tasks)
+        return states
+
     title = f"⚡ Querying {len(models)} models in parallel"
+    started = time.perf_counter()
     with Live(
         _ensemble_status_panel(states, title), console=console, refresh_per_second=12
     ) as live:
         while not all(t.done() for t in tasks):
-            live.update(_ensemble_status_panel(states, title))
+            live.update(_ensemble_status_panel(states, title, started))
             await asyncio.sleep(0.08)
-        live.update(_ensemble_status_panel(states, title))
+        live.update(_ensemble_status_panel(states, title, started))
     await asyncio.gather(*tasks)
     return states
 
@@ -508,33 +642,50 @@ def ensemble_prompt(
         sys.exit(1)
 
     # ── per-model summaries ──
-    console.print()
+    if not _PLAIN:
+        console.print()
     for i, st in enumerate(states, 1):
         if st["status"] != "done" or not st["text"].strip():
             continue
-        console.print(
-            Panel(
-                _md(st["text"].strip()),
-                title=f"Model {i} · {_short(st['model'])}",
-                title_align="left",
-                border_style="cyan",
-                padding=(1, 2),
+        header = f"Model {i} · {_short(st['model'])}"
+        if _PLAIN:
+            console.print(f"\n## {header}\n")
+            console.print(st["text"].strip())
+        else:
+            usage = st.get("usage") or {}
+            tokens = usage.get("completion_tokens", 0)
+            elapsed = st.get("elapsed", 0)
+            subtitle = (
+                f"{tokens} tokens · {elapsed:.1f}s"
+                if tokens or elapsed
+                else None
             )
-        )
+            console.print(
+                Panel(
+                    _md(st["text"].strip()),
+                    title=header,
+                    subtitle=subtitle,
+                    subtitle_align="right",
+                    title_align="left",
+                    border_style="cyan",
+                    padding=(1, 2),
+                )
+            )
 
     # ── consolidate ──
-    console.print()
-    console.print(
-        Padding(
-            Text.assemble(
-                ("✦ ", "bold magenta"),
-                ("Consolidating with ", "dim"),
-                (_short(consensus_model), "bold cyan"),
-                ("…", "dim"),
-            ),
-            (0, 2),
+    if not _PLAIN:
+        console.print()
+        console.print(
+            Padding(
+                Text.assemble(
+                    ("✦ ", "bold magenta"),
+                    ("Consolidating with ", "dim"),
+                    (_short(consensus_model), "bold cyan"),
+                    ("…", "dim"),
+                ),
+                (0, 2),
+            )
         )
-    )
 
     answers = "\n\n".join(
         f'<answer model="Model {i}">\n{s["text"].strip()}\n</answer>'

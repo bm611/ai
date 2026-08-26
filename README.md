@@ -35,7 +35,21 @@ cat log.txt | ai "summarize errors"
 
 # Ensemble mode: query multiple models in parallel, then consolidate
 ai -e "what is the best approach to rate limiting?"
+
+# Quiet / script-friendly output
+ai --no-banner "explain quicksort"
+ai --plain "..." > response.md     # force raw markdown output
 ```
+
+## Output modes
+
+By default you get the full themed UI: ASCII banner, live markdown rendering,
+spinner while the model warms up, and a stats footer (tokens · time-to-first-token · tok/s · elapsed).
+
+- **Piped or redirected stdout** automatically switches to raw markdown output
+  — no banner, no styling, no stats — so `ai "..." > out.md` produces clean text.
+- `--plain` forces that behavior explicitly.
+- `--no-banner` keeps everything else but skips the ASCII logo for a quieter run.
 
 ## Ensemble mode
 
@@ -59,7 +73,7 @@ ai config set consensus_model deepseek/deepseek-v4-pro
 
 ```bash
 ai config show              # Show current config and file location
-ai config set model x-ai/glm-5.1
+ai config set model z-ai/glm-5.3-flash
 ai config set theme dracula
 ai config set provider '{"order": ["DeepInfra"]}'
 ai config models            # List popular models
@@ -70,11 +84,22 @@ Config is stored at `~/.config/ai-cli/config.json`.
 
 | Key | Description | Default |
 |---|---|---|
-| `model` | OpenRouter model ID | `deepseek/deepseek-v4-flash` |
+| `model` | OpenRouter model ID | `z-ai/glm-5.3-flash` |
 | `theme` | `auto`, `dark`, `light`, or any Pygments style | `auto` |
 | `provider` | OpenRouter provider routing (JSON) | not set |
 | `ensemble_models` | Models queried in parallel for `-e` (JSON list or comma-separated) | `deepseek/deepseek-v4-flash`, `google/gemini-3.1-flash-lite-preview` |
 | `consensus_model` | Model that consolidates ensemble answers | `deepseek/deepseek-v4-pro` |
+
+## Flags
+
+| Flag | Description |
+|---|---|
+| `-m, --model` | Override the model for this request |
+| `-f, --file` | Attach file(s) as context (repeatable) |
+| `-c, --chat` | Chat mode: ask follow-ups after the first response |
+| `-e, --ensemble` | Query multiple models in parallel, then consolidate |
+| `--no-banner` | Skip the ASCII logo |
+| `--plain` | Raw markdown output, no styling (implied when stdout is piped) |
 
 ## Themes
 

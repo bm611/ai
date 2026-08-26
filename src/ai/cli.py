@@ -10,15 +10,13 @@ from ai.client import ensemble_prompt, stream_prompt
 from ai.config import CONFIG_FILE, load_config, save_config
 
 POPULAR_MODELS = [
+    ("z-ai/glm-5.3-flash", "GLM 5.3 Flash"),
     ("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash"),
     ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
     ("google/gemma-4-31b-it", "Gemma 4 31B Instruct"),
     ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite Preview"),
-    ("mimo/mimo-v2.5", "MiMo V2.5 (https://api.xiaomimimo.com/v1/chat/completions)"),
-    (
-        "mimo/mimo-v2.5-pro",
-        "MiMo V2.5 Pro (https://api.xiaomimimo.com/v1/chat/completions)",
-    ),
+    ("mimo/mimo-v2.5", "MiMo V2.5 (direct API, not OpenRouter)"),
+    ("mimo/mimo-v2.5-pro", "MiMo V2.5 Pro (direct API, not OpenRouter)"),
 ]
 
 THEME_OPTIONS = [
@@ -29,7 +27,7 @@ THEME_OPTIONS = [
 ]
 
 CONFIG_KEYS = [
-    ("model", "OpenRouter model ID", "deepseek/deepseek-v4-flash"),
+    ("model", "OpenRouter model ID", "z-ai/glm-5.3-flash"),
     ("theme", "Color theme for output", "auto"),
     ("provider", "OpenRouter provider routing (JSON)", '{"order": ["DeepInfra"]}'),
     (
@@ -86,12 +84,10 @@ class PromptGroup(click.Group):
         first = positional[0] if positional else None
         if first is not None and first not in self.commands:
             # Let click parse only the group's own options (-m, -f, etc.)
-            super(click.Group, self).parse_args(ctx, args)
-            # Stash all positional args (the prompt) into ctx.args
-            ctx.args = positional
-            ctx.protected_args = []
-            ctx.invoked_subcommand = None
-            return positional
+            prompt_args = super(click.Group, self).parse_args(ctx, args)
+            # Stash the remaining args (the prompt) into ctx.args
+            ctx.args = prompt_args
+            return prompt_args
         return super().parse_args(ctx, args)
 
 
@@ -127,8 +123,22 @@ class PromptGroup(click.Group):
     default=False,
     help="Query multiple models in parallel, then consolidate into one answer.",
 )
+@click.option(
+    "--no-banner",
+    "no_banner",
+    is_flag=True,
+    default=False,
+    help="Skip the ASCII logo for a quieter prompt run.",
+)
+@click.option(
+    "--plain",
+    "plain",
+    is_flag=True,
+    default=False,
+    help="Raw markdown output with no styling (implied when stdout is piped).",
+)
 @click.pass_context
-def cli(ctx, model, files, chat, ensemble):
+def cli(ctx, model, files, chat, ensemble, no_banner, plain):
     """AI CLI — query LLMs via OpenRouter from your terminal.
 
     \b
@@ -139,8 +149,9 @@ def cli(ctx, model, files, chat, ensemble):
         ai -m anthropic/claude-sonnet-4 "write a haiku"
         ai -c "explain quicksort"          # chat mode: ask follow-ups
         ai -e "what is the best sorting algorithm?"  # ensemble: query 2 models + consolidate
-        pbpaste | ai "review this code"
+        pbpaste | ai "review this code"    # piped output is plain markdown
         cat log.txt | ai "summarize errors"
+        ai --plain "..." > response.md     # force raw output for redirection
 
     \b
     Configuration:
@@ -151,6 +162,13 @@ def cli(ctx, model, files, chat, ensemble):
     """
     if ctx.invoked_subcommand is not None:
         return
+
+    # Piped/redirected stdout gets raw markdown automatically.
+    from ai import client as ai_client
+
+    pipe_detected = not sys.stdout.isatty()
+    ai_client.set_plain(plain or pipe_detected)
+    ai_client.set_show_banner(not no_banner)
 
     prompt = ctx.args
 
@@ -287,9 +305,9 @@ def config_models():
         "\n[bold]Popular models[/] [dim](use OpenRouter IDs, or MiMo V2.5 with MIMO_API_KEY)[/]\n"
     )
     console.print(_marked_table(POPULAR_MODELS, current))
-    console.print(f"\n[dim]Set with:[/]  ai config set model <model-id>")
-    console.print(f"[dim]Browse all:[/] https://openrouter.ai/models\n")
-    console.print(f"[dim]MiMo API:[/] https://api.xiaomimimo.com/v1/chat/completions\n")
+    console.print("\n[dim]Set with:[/]  ai config set model <model-id>")
+    console.print("[dim]Browse all:[/] https://openrouter.ai/models\n")
+    console.print("[dim]MiMo API:[/] https://api.xiaomimimo.com/v1/chat/completions\n")
 
 
 @config.command("themes")
@@ -301,4 +319,4 @@ def config_themes():
 
     console.print("\n[bold]Available themes[/]\n")
     console.print(_marked_table(THEME_OPTIONS, current))
-    console.print(f"\n[dim]Set with:[/]  ai config set theme <name>\n")
+    console.print("\n[dim]Set with:[/]  ai config set theme <name>\n")

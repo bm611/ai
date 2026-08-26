@@ -8,7 +8,7 @@ CONFIG_DIR = Path.home() / ".config" / "ai-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULTS = {
-    "model": "deepseek/deepseek-v4-flash",
+    "model": "z-ai/glm-5.3-flash",
     "provider": None,  # let OpenRouter pick; or set e.g. {"order": ["DeepInfra"]}
     "theme": "auto",  # "auto", "dark", "light", or "retro"
     # ensemble mode: query these models in parallel, then consolidate

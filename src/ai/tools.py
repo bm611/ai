@@ -1,8 +1,5 @@
 import json
 import os
-import sys
-
-from rich.console import Console
 
 TOOLS = [
     {
@@ -33,18 +30,20 @@ TOOLS = [
 def _get_exa_key() -> str:
     key = os.environ.get("EXA_API_KEY")
     if not key:
-        Console(stderr=True).print(
-            "[red bold]Error:[/] EXA_API_KEY environment variable is not set."
+        raise RuntimeError(
+            "EXA_API_KEY environment variable is not set. "
+            "Export it or add it to your shell profile."
         )
-        sys.exit(1)
     return key
 
 
 def execute_tool(name: str, arguments: str) -> str:
-    args = json.loads(arguments)
-
-    if name == "web_search":
-        return _web_search(args["query"])
+    try:
+        args = json.loads(arguments)
+        if name == "web_search":
+            return _web_search(args["query"])
+    except Exception as exc:  # noqa: BLE001 - feed failures back to the model
+        return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
     return json.dumps({"error": f"Unknown tool: {name}"})
 
