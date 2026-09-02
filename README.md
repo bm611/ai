@@ -1,30 +1,38 @@
 # ai
 
-Query LLMs via [OpenRouter](https://openrouter.ai) from your terminal.
+Query LLMs via [OpenRouter](https://openrouter.ai) or the direct MiMo API from your terminal.
 
 ## Install
 
 ```bash
-pip install -e .
+go install github.com/bm611/ai@latest
+```
+
+Or build the current checkout:
+
+```bash
+go build -trimpath -o ai .
 ```
 
 ## Setup
 
-Set your OpenRouter API key:
+Set the key for the API you use:
 
 ```bash
-export OPENROUTER_API_KEY="sk-..."
+export OPENROUTER_API_KEY="..."
+export MIMO_API_KEY="..." # only needed for MiMo models
+export EXA_API_KEY="..."  # only needed when a model uses web search
 ```
 
 ## Usage
 
 ```bash
 # One-shot prompt
-ai "explain quicksort in python"
+ai "explain quicksort in Go"
 
 # Attach files as context
-ai -f main.py "explain this code"
-ai -f src/a.py -f src/b.py "find the bug"
+ai -f main.go "explain this code"
+ai -f cli.go -f client.go "find the bug"
 
 # Override the model
 ai -m anthropic/claude-sonnet-4 "write a haiku"
@@ -33,36 +41,28 @@ ai -m anthropic/claude-sonnet-4 "write a haiku"
 pbpaste | ai "review this code"
 cat log.txt | ai "summarize errors"
 
-# Ensemble mode: query multiple models in parallel, then consolidate
+# Chat mode
+ai -c "explain quicksort"
+
+# Query multiple models in parallel, then consolidate
 ai -e "what is the best approach to rate limiting?"
 
-# Quiet / script-friendly output
+# Script-friendly output
 ai --no-banner "explain quicksort"
-ai --plain "..." > response.md     # force raw markdown output
+ai --plain "..." > response.md
 ```
 
 ## Output modes
 
-By default you get the full themed UI: ASCII banner, live markdown rendering,
-spinner while the model warms up, and a stats footer (tokens · time-to-first-token · tok/s · elapsed).
+Interactive output includes the themed ASCII banner, live token streaming, a waiting indicator, and a stats footer with tokens, time to first token, throughput, and elapsed time.
 
-- **Piped or redirected stdout** automatically switches to raw markdown output
-  — no banner, no styling, no stats — so `ai "..." > out.md` produces clean text.
-- `--plain` forces that behavior explicitly.
-- `--no-banner` keeps everything else but skips the ASCII logo for a quieter run.
+- Piped or redirected stdout automatically emits raw markdown without banner, styling, or stats.
+- `--plain` forces raw output.
+- `--no-banner` keeps interactive streaming and stats but skips the logo.
 
 ## Ensemble mode
 
-`-e/--ensemble` sends your prompt to several models **in parallel**, shows a live
-status panel as each one responds, prints each model's answer, then uses a
-"consensus" model to synthesize a single best answer.
-
-```bash
-ai -e "design a caching strategy for a read-heavy API"
-ai -e -m anthropic/claude-sonnet-4 "..."   # -m overrides the consensus model
-```
-
-Configure which models are used:
+`-e/--ensemble` queries the configured models concurrently, prints each successful answer, then asks the consensus model to synthesize a final answer.
 
 ```bash
 ai config set ensemble_models 'deepseek/deepseek-v4-flash,google/gemini-3.1-flash-lite-preview'
@@ -72,22 +72,22 @@ ai config set consensus_model deepseek/deepseek-v4-pro
 ## Configuration
 
 ```bash
-ai config show              # Show current config and file location
+ai config show
 ai config set model z-ai/glm-5.3-flash
-ai config set theme dracula
+ai config set theme retro
 ai config set provider '{"order": ["DeepInfra"]}'
-ai config models            # List popular models
-ai config themes             # List available themes
+ai config models
+ai config themes
 ```
 
-Config is stored at `~/.config/ai-cli/config.json`.
+Configuration remains compatible with the Python version and is stored at `~/.config/ai-cli/config.json`.
 
 | Key | Description | Default |
 |---|---|---|
-| `model` | OpenRouter model ID | `z-ai/glm-5.3-flash` |
-| `theme` | `auto`, `dark`, `light`, or any Pygments style | `auto` |
-| `provider` | OpenRouter provider routing (JSON) | not set |
-| `ensemble_models` | Models queried in parallel for `-e` (JSON list or comma-separated) | `deepseek/deepseek-v4-flash`, `google/gemini-3.1-flash-lite-preview` |
+| `model` | OpenRouter or MiMo model ID | `z-ai/glm-5.3-flash` |
+| `theme` | `auto`, `dark`, `light`, or `retro` | `auto` |
+| `provider` | OpenRouter provider routing JSON | not set |
+| `ensemble_models` | Models queried in parallel for `-e` | DeepSeek V4 Flash, Gemini 3.1 Flash Lite |
 | `consensus_model` | Model that consolidates ensemble answers | `deepseek/deepseek-v4-pro` |
 
 ## Flags
@@ -95,21 +95,22 @@ Config is stored at `~/.config/ai-cli/config.json`.
 | Flag | Description |
 |---|---|
 | `-m, --model` | Override the model for this request |
-| `-f, --file` | Attach file(s) as context (repeatable) |
-| `-c, --chat` | Chat mode: ask follow-ups after the first response |
-| `-e, --ensemble` | Query multiple models in parallel, then consolidate |
+| `-f, --file` | Attach files as context; repeatable |
+| `-c, --chat` | Ask follow-up questions after the first response |
+| `-e, --ensemble` | Query multiple models concurrently, then consolidate |
 | `--no-banner` | Skip the ASCII logo |
-| `--plain` | Raw markdown output, no styling (implied when stdout is piped) |
+| `--plain` | Raw markdown output; automatic when stdout is piped |
 
-## Themes
+## Development
 
-Theme detection follows the system light/dark mode on macOS. On Linux or when set to `dark`/`light`, the matching built-in theme is used. Any [Pygments style](https://pygments.org/styles/) name also works for code highlighting.
+```bash
+go test ./...
+go vet ./...
+go build -trimpath -ldflags="-s -w" -o bin/ai .
+go test -run='^$' -bench='^BenchmarkCLIStartup$' -benchtime=30x
+```
 
-## Dependencies
-
-- [click](https://click.palletsprojects.com/) — CLI framework
-- [httpx](https://www.python-httpx.org/) — HTTP client with streaming
-- [rich](https://rich.readthedocs.io/) — terminal formatting and markdown rendering
+The implementation uses the Go standard library plus `golang.org/x/term` for reliable terminal detection.
 
 ## License
 
