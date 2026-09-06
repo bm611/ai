@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import time
+from collections.abc import Callable
 
 import httpx
 from rich.console import Console
@@ -320,6 +321,7 @@ def _do_stream(
     messages: list[dict],
     console: Console,
     _md,
+    on_text: Callable[[str], None] | None = None,
 ) -> tuple[str, str, str, dict]:
     """Stream a single chat completion, handling tool calls automatically."""
     collected, used_model, first_token_time, token_count = "", body["model"], None, 0
@@ -330,10 +332,13 @@ def _do_stream(
         with http.stream("POST", url, json=body, headers=headers) as resp:
             if resp.status_code != 200:
                 resp.read()
+                if on_text is not None:
+                    detail, hint = _http_error_detail(resp.status_code, resp.text)
+                    raise RuntimeError(f"HTTP {resp.status_code}: {detail} {hint}")
                 _print_http_error(console, resp.status_code, resp.text)
 
             usage: dict = {}
-            if _PLAIN:
+            if _PLAIN or on_text is not None:
                 # Raw output: stream text verbatim as it arrives.
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
@@ -351,10 +356,13 @@ def _do_stream(
                     text = _accumulate_delta(delta, tool_calls_acc)
                     if text:
                         collected += text
-                        print(text, end="", flush=True)
+                        if on_text is not None:
+                            on_text(collected)
+                        else:
+                            print(text, end="", flush=True)
                         if first_token_time is None:
                             first_token_time = time.perf_counter()
-                if collected:
+                if collected and on_text is None:
                     print()
             else:
                 # Transient status while waiting for the first token, so the
@@ -363,6 +371,7 @@ def _do_stream(
                     Text("  thinking…", style="dim italic"),
                     console=console,
                     refresh_per_second=8,
+                    transient=True,
                 )
                 with live_ctx as live:
                     last_len = 0
@@ -387,11 +396,14 @@ def _do_stream(
                             collected += text
                             grown = len(collected) - last_len
                             if (
-                                len(collected) < _STREAM_RENDER_THRESHOLD
+                                last_len == 0
+                                or len(collected) < _STREAM_RENDER_THRESHOLD
                                 or grown >= _STREAM_RENDER_THRESHOLD // 4
                             ):
-                                live.update(Padding(_md(collected), (1, 2)))
+                                live.update(Padding(_md(collected), (1, 2)), refresh=True)
                                 last_len = len(collected)
+                if collected:
+                    console.print(Padding(_md(collected), (1, 2)))
 
     t_start = first_token_time or time.perf_counter()
     t_end = time.perf_counter()
@@ -402,10 +414,13 @@ def _do_stream(
     if tool_calls_acc:
         _handle_tool_calls(tool_calls_acc, messages, console)
         body["messages"] = messages
-        return _do_stream(url, body, headers, messages, console, _md)
+        return _do_stream(
+            url, body, headers, messages, console, _md, on_text=on_text
+        )
 
     real_tokens = usage.get("completion_tokens", token_count)
-    _print_stats(console, used_model, provider_name, elapsed, gen_time, real_tokens, ttft)
+    if on_text is None:
+        _print_stats(console, used_model, provider_name, elapsed, gen_time, real_tokens, ttft)
     return collected, used_model, provider_name, usage
 
 
@@ -445,18 +460,7 @@ def _make_renderer(theme: str) -> tuple[Console, callable, str]:
 def _print_banner(console: Console, style: str = "bold magenta") -> None:
     if not _SHOW_BANNER or _PLAIN:
         return
-    logo = [
-        r"  __                       .__              .__           .__            __   ",
-        r"_/  |_  ___________  _____ |__| ____ _____  |  |     ____ |  |__ _____ _/  |_ ",
-        r"\   __\/ __ \_  __ \/     \|  |/    \\__  \ |  |   _/ ___\|  |  \\__  \\   __\\",
-        r" |  | \  ___/|  | \/  Y Y  \  |   |  \/ __ \|  |__ \  \___|   Y  \/ __ \|  |  ",
-        r" |__|  \___  >__|  |__|_|  /__|___|  (____  /____/  \___  >___|  (____  /__|  ",
-        r"           \/            \/        \/     \/            \/     \/     \/      ",
-    ]
-    console.print()
-    for line in logo:
-        console.print(Text(line, style=style))
-    console.print(Rule(style="dim"))
+    console.print(Text("✦ brain snacks", style=style))
 
 
 def stream_prompt(

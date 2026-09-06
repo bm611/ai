@@ -19,8 +19,14 @@ export OPENROUTER_API_KEY="sk-..."
 ## Usage
 
 ```bash
-# One-shot prompt
+# Open full-screen chat
+ai
+
+# Start with a prompt (/quit to exit)
 ai "explain quicksort in python"
+
+# Get a single answer
+ai --no-chat "explain quicksort in python"
 
 # Attach files as context
 ai -f main.py "explain this code"
@@ -43,13 +49,21 @@ ai --plain "..." > response.md     # force raw markdown output
 
 ## Output modes
 
-By default you get the full themed UI: ASCII banner, live markdown rendering,
-spinner while the model warms up, and a stats footer (tokens · time-to-first-token · tok/s · elapsed).
+Interactive `ai` opens a full-screen chat with a compact header, scrollable
+conversation, persistent input, and a muted model/status line. Type a message
+and press Enter to send. `/help` shows shortcuts, `/clear` starts a new
+conversation, and `/quit` (or Ctrl+C / Ctrl+D) returns to your shell.
+Answers stream in place; the thinking status disappears as soon as text arrives.
+Conversation history is kept for this session only.
 
-- **Piped or redirected stdout** automatically switches to raw markdown output
-  — no banner, no styling, no stats — so `ai "..." > out.md` produces clean text.
-- `--plain` forces that behavior explicitly.
-- `--no-banner` keeps everything else but skips the ASCII logo for a quieter run.
+- `--no-chat` returns a single answer in the regular terminal.
+- Piped input, redirected output, and `--plain` run once without the TUI.
+- Redirected output and `--plain` produce raw Markdown.
+- `--no-banner` hides the heading.
+- Ensemble mode returns one consolidated answer in the regular terminal.
+
+The full-screen layout uses a dark, minimal palette. Configured themes still
+apply to the regular terminal output.
 
 ## Ensemble mode
 
@@ -96,9 +110,9 @@ Config is stored at `~/.config/ai-cli/config.json`.
 |---|---|
 | `-m, --model` | Override the model for this request |
 | `-f, --file` | Attach file(s) as context (repeatable) |
-| `-c, --chat` | Chat mode: ask follow-ups after the first response |
+| `-c, --chat / --no-chat` | Follow-up chat in the terminal (enabled by default) |
 | `-e, --ensemble` | Query multiple models in parallel, then consolidate |
-| `--no-banner` | Skip the ASCII logo |
+| `--no-banner` | Skip the compact heading |
 | `--plain` | Raw markdown output, no styling (implied when stdout is piped) |
 
 ## Themes
@@ -110,6 +124,7 @@ Theme detection follows the system light/dark mode on macOS. On Linux or when se
 - [click](https://click.palletsprojects.com/) — CLI framework
 - [httpx](https://www.python-httpx.org/) — HTTP client with streaming
 - [rich](https://rich.readthedocs.io/) — terminal formatting and markdown rendering
+- [Textual](https://textual.textualize.io/) — full-screen chat interface
 
 ## License
 

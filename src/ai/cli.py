@@ -109,11 +109,10 @@ class PromptGroup(click.Group):
 )
 @click.option(
     "-c",
-    "--chat",
+    "--chat/--no-chat",
     "chat",
-    is_flag=True,
-    default=False,
-    help="Enter chat mode to ask follow-up questions after the initial response.",
+    default=True,
+    help="Ask follow-up questions in the terminal (default: enabled).",
 )
 @click.option(
     "-e",
@@ -128,7 +127,7 @@ class PromptGroup(click.Group):
     "no_banner",
     is_flag=True,
     default=False,
-    help="Skip the ASCII logo for a quieter prompt run.",
+    help="Skip the compact heading.",
 )
 @click.option(
     "--plain",
@@ -147,7 +146,7 @@ def cli(ctx, model, files, chat, ensemble, no_banner, plain):
         ai -f main.py "explain this code"
         ai -f src/a.py -f src/b.py "find the bug"
         ai -m anthropic/claude-sonnet-4 "write a haiku"
-        ai -c "explain quicksort"          # chat mode: ask follow-ups
+        ai --no-chat "explain quicksort"   # single answer
         ai -e "what is the best sorting algorithm?"  # ensemble: query 2 models + consolidate
         pbpaste | ai "review this code"    # piped output is plain markdown
         cat log.txt | ai "summarize errors"
@@ -190,7 +189,11 @@ def cli(ctx, model, files, chat, ensemble, no_banner, plain):
     if prompt_text:
         parts.append(prompt_text)
 
-    if not parts:
+    use_tui = (
+        chat and sys.stdin.isatty() and not pipe_detected
+        and not plain and not ensemble
+    )
+    if not parts and not use_tui:
         click.echo(ctx.get_help())
         return
 
@@ -206,7 +209,13 @@ def cli(ctx, model, files, chat, ensemble, no_banner, plain):
         return
 
     use_model = model or cfg["model"]
-    stream_prompt(full_prompt, use_model, provider, theme, chat=chat)
+    if use_tui:
+        from ai.tui import ChatApp
+
+        ChatApp(use_model, provider, theme, full_prompt, not no_banner).run()
+        return
+
+    stream_prompt(full_prompt, use_model, provider, theme, chat=False)
 
 
 # ── config subcommand group ──────────────────────────────────────────
