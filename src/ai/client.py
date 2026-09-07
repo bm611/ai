@@ -239,7 +239,8 @@ def _accumulate_delta(delta: dict, acc: ToolCall) -> str:
 
 
 def _handle_tool_calls(
-    tc_acc: ToolCall, messages: list[dict], console: Console
+    tc_acc: ToolCall, messages: list[dict], console: Console,
+    on_status: Callable[[str], None] | None = None,
 ) -> None:
     """Execute accumulated tool calls and append results to messages."""
     sorted_tcs = sorted(tc_acc.values(), key=lambda x: x["id"])
@@ -257,6 +258,8 @@ def _handle_tool_calls(
         }
     )
     for tc in sorted_tcs:
+        if on_status is not None:
+            on_status(f"running {tc['name']}…")
         query = json.loads(tc["arguments"]).get("query", "")
         console.print(
             f"  [dim]⟳ calling[/] [bold cyan]{tc['name']}[/][dim]({query})[/]"
@@ -322,12 +325,15 @@ def _do_stream(
     console: Console,
     _md,
     on_text: Callable[[str], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> tuple[str, str, str, dict]:
     """Stream a single chat completion, handling tool calls automatically."""
     collected, used_model, first_token_time, token_count = "", body["model"], None, 0
     provider_name, tool_calls_acc = "", {}
     request_start = time.perf_counter()
 
+    if on_status is not None:
+        on_status("waiting for model…")
     with httpx.Client(timeout=120) as http:
         with http.stream("POST", url, json=body, headers=headers) as resp:
             if resp.status_code != 200:
@@ -341,18 +347,27 @@ def _do_stream(
             if _PLAIN or on_text is not None:
                 # Raw output: stream text verbatim as it arrives.
                 for line in resp.iter_lines():
+                    if on_status is not None:
+                        on_status("")  # Check cancellation even on keep-alives.
                     if not line.startswith("data: "):
                         continue
                     payload = line.removeprefix("data: ").strip()
                     if payload == "[DONE]":
                         break
                     chunk = json.loads(payload)
+                    if chunk.get("error"):
+                        raise RuntimeError(f"Provider stream error: {chunk['error']}")
                     used_model = chunk.get("model", used_model)
                     if "provider" in chunk:
                         provider_name = chunk["provider"]
                     if chunk.get("usage"):
                         usage = chunk["usage"]
                     delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+                    if on_status is not None:
+                        if delta.get("tool_calls"):
+                            on_status("preparing tool call…")
+                        elif delta.get("reasoning") or delta.get("reasoning_details"):
+                            on_status("thinking…")
                     text = _accumulate_delta(delta, tool_calls_acc)
                     if text:
                         collected += text
@@ -412,10 +427,11 @@ def _do_stream(
     ttft = (first_token_time - request_start) if first_token_time else None
 
     if tool_calls_acc:
-        _handle_tool_calls(tool_calls_acc, messages, console)
+        _handle_tool_calls(tool_calls_acc, messages, console, on_status)
         body["messages"] = messages
         return _do_stream(
-            url, body, headers, messages, console, _md, on_text=on_text
+            url, body, headers, messages, console, _md,
+            on_text=on_text, on_status=on_status,
         )
 
     real_tokens = usage.get("completion_tokens", token_count)

@@ -52,8 +52,12 @@ ai --plain "..." > response.md     # force raw markdown output
 Interactive `ai` opens a full-screen chat with a compact header, scrollable
 conversation, persistent input, and a muted model/status line. Type a message
 and press Enter to send. `/help` shows shortcuts, `/clear` starts a new
-conversation, and `/quit` (or Ctrl+C / Ctrl+D) returns to your shell.
-Answers stream in place; the thinking status disappears as soon as text arrives.
+conversation, `/cancel` stops the current request, and `/quit` (or Ctrl+C /
+Ctrl+D) returns to your shell. The status line shows the current request stage
+and elapsed time.
+Answers stream in place, appending block by block so the screen stays steady
+instead of redrawing the whole reply on every chunk. Code blocks render in a
+framed panel labelled with their language.
 Conversation history is kept for this session only.
 
 - `--no-chat` returns a single answer in the regular terminal.
@@ -62,8 +66,8 @@ Conversation history is kept for this session only.
 - `--no-banner` hides the heading.
 - Ensemble mode returns one consolidated answer in the regular terminal.
 
-The full-screen layout uses a dark, minimal palette. Configured themes still
-apply to the regular terminal output.
+The full-screen layout follows the configured theme (`dark`, `light`, or
+`retro`), which also drives syntax highlighting inside code blocks.
 
 ## Ensemble mode
 

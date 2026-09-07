@@ -73,6 +73,7 @@ class ChatTest(unittest.TestCase):
         http = mock.MagicMock()
         http.stream.return_value.__enter__.side_effect = responses
         callback = mock.Mock()
+        status = mock.Mock()
         messages = []
         output = io.StringIO()
         with (
@@ -89,9 +90,14 @@ class ChatTest(unittest.TestCase):
                 Console(file=io.StringIO()),
                 str,
                 on_text=callback,
+                on_status=status,
             )
         self.assertEqual(result[0], "result")
         callback.assert_called_once_with("result")
+        status.assert_any_call("running search…")
+        self.assertEqual(
+            status.call_args_list.count(mock.call("waiting for model…")), 2
+        )
         self.assertEqual(messages[-1]["role"], "tool")
         self.assertEqual(output.getvalue(), "")
 
