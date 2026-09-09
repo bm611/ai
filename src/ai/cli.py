@@ -10,7 +10,7 @@ from ai.client import ensemble_prompt, stream_prompt
 from ai.config import CONFIG_FILE, load_config, save_config
 
 POPULAR_MODELS = [
-    ("z-ai/glm-5.3-flash", "GLM 5.3 Flash"),
+    ("inception/mercury-2.5", "Mercury 2.5"),
     ("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash"),
     ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
     ("google/gemma-4-31b-it", "Gemma 4 31B Instruct"),
@@ -27,7 +27,7 @@ THEME_OPTIONS = [
 ]
 
 CONFIG_KEYS = [
-    ("model", "OpenRouter model ID", "z-ai/glm-5.3-flash"),
+    ("model", "OpenRouter model ID", "inception/mercury-2.5"),
     ("theme", "Color theme for output", "auto"),
     ("provider", "OpenRouter provider routing (JSON)", '{"order": ["DeepInfra"]}'),
     (

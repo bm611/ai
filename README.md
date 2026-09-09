@@ -91,7 +91,7 @@ ai config set consensus_model deepseek/deepseek-v4-pro
 
 ```bash
 ai config show              # Show current config and file location
-ai config set model z-ai/glm-5.3-flash
+ai config set model inception/mercury-2.5
 ai config set theme dracula
 ai config set provider '{"order": ["DeepInfra"]}'
 ai config models            # List popular models
@@ -102,7 +102,7 @@ Config is stored at `~/.config/ai-cli/config.json`.
 
 | Key | Description | Default |
 |---|---|---|
-| `model` | OpenRouter model ID | `z-ai/glm-5.3-flash` |
+| `model` | OpenRouter model ID | `inception/mercury-2.5` |
 | `theme` | `auto`, `dark`, `light`, or any Pygments style | `auto` |
 | `provider` | OpenRouter provider routing (JSON) | not set |
 | `ensemble_models` | Models queried in parallel for `-e` (JSON list or comma-separated) | `deepseek/deepseek-v4-flash`, `google/gemini-3.1-flash-lite-preview` |
