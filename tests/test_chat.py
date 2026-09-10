@@ -153,6 +153,92 @@ class ChatTest(unittest.TestCase):
                 if chunks:
                     self.assertIn("".join(chunks), output.getvalue())
 
+    def test_describe_tool_call_survives_bad_json(self):
+        self.assertEqual(client._describe_tool_call('{"query": "hi"}'), "hi")
+        self.assertEqual(client._describe_tool_call("not json"), "not json")
+        self.assertEqual(client._describe_tool_call("{bad"), "{bad")
+
+    def test_tool_call_rounds_are_capped(self):
+        tool = {
+            "index": 0,
+            "id": "call1",
+            "function": {"name": "web_search", "arguments": '{"query": "x"}'},
+        }
+        response = mock.MagicMock()
+        response.status_code = 200
+        response.iter_lines.return_value = [
+            "data: " + json.dumps({"choices": [{"delta": {"tool_calls": [tool]}}]}),
+            "data: [DONE]",
+        ]
+        http = mock.MagicMock()
+        http.stream.return_value.__enter__.return_value = response
+        with (
+            mock.patch.object(client.httpx, "Client") as factory,
+            mock.patch.object(client, "execute_tool") as execute,
+        ):
+            factory.return_value.__enter__.return_value = http
+            result = client._do_stream(
+                "url",
+                {"model": "test"},
+                {},
+                [],
+                Console(file=io.StringIO()),
+                str,
+                on_text=mock.Mock(),
+                _tool_round=client._MAX_TOOL_ROUNDS,
+            )
+        execute.assert_not_called()
+        self.assertIn("too many tool calls", result[0])
+
+    def test_retries_transient_status_then_succeeds(self):
+        failed = mock.MagicMock()
+        failed.status_code = 429
+        failed.headers = {}
+        succeeded = mock.MagicMock()
+        succeeded.status_code = 200
+        succeeded.headers = {}
+        succeeded.iter_lines.return_value = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
+            "data: [DONE]",
+        ]
+        http = mock.MagicMock()
+        http.stream.return_value.__enter__.side_effect = [failed, succeeded]
+        with (
+            mock.patch.object(client.httpx, "Client") as factory,
+            mock.patch.object(client.time, "sleep"),
+            mock.patch.object(client, "_print_stats"),
+        ):
+            factory.return_value.__enter__.return_value = http
+            result = client._do_stream(
+                "url", {"model": "test"}, {}, [], Console(file=io.StringIO()), str
+            )
+        self.assertEqual(result[0], "ok")
+        self.assertEqual(http.stream.call_count, 2)
+
+    def test_retry_exhaustion_raises(self):
+        failed = mock.MagicMock()
+        failed.status_code = 503
+        failed.headers = {}
+        failed.text = "boom"
+        http = mock.MagicMock()
+        http.stream.return_value.__enter__.return_value = failed
+        with (
+            mock.patch.object(client.httpx, "Client") as factory,
+            mock.patch.object(client.time, "sleep"),
+        ):
+            factory.return_value.__enter__.return_value = http
+            with self.assertRaises(RuntimeError):
+                client._do_stream(
+                    "url",
+                    {"model": "test"},
+                    {},
+                    [],
+                    Console(file=io.StringIO()),
+                    str,
+                    on_text=mock.Mock(),
+                )
+        self.assertEqual(http.stream.call_count, client._MAX_RETRIES + 1)
+
     def test_compact_heading_and_suppression(self):
         for plain, show, expected in [
             (False, True, "✦ brain snacks\n"),

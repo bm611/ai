@@ -5,6 +5,7 @@ import re
 import sys
 import time
 from collections.abc import Callable
+from contextlib import ExitStack
 
 import httpx
 from rich.console import Console
@@ -119,6 +120,24 @@ _ERROR_HINTS = {
     503: "Service unavailable — try again shortly.",
 }
 
+# Transient failures worth retrying before giving up.
+_RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 0.5
+_RETRY_MAX_DELAY = 8.0
+
+
+def _retry_delay(resp: httpx.Response | None, attempt: int) -> float:
+    """Exponential backoff, honouring a Retry-After header when present."""
+    if resp is not None:
+        retry_after = resp.headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(float(retry_after), _RETRY_MAX_DELAY)
+            except ValueError:
+                pass
+    return min(_RETRY_BASE_DELAY * 2 ** (attempt - 1), _RETRY_MAX_DELAY)
+
 
 def _http_error_detail(status_code: int, body: str) -> tuple[str, str]:
     """Return (detail, hint) extracted from a failed HTTP response."""
@@ -226,6 +245,24 @@ def _resolve_theme(theme_setting: str) -> tuple[Theme, str, str]:
 
 ToolCall = dict[int, dict]  # index -> {id, name, arguments}
 
+# Safety cap on automatic tool-call rounds within a single request, so a
+# looping model can't spin forever burning tokens.
+_MAX_TOOL_ROUNDS = 8
+
+
+def _describe_tool_call(arguments: str) -> str:
+    """Short human-readable summary of a tool call's arguments."""
+    try:
+        args = json.loads(arguments)
+    except (json.JSONDecodeError, TypeError):
+        return arguments.strip()[:80]
+    if isinstance(args, dict):
+        query = args.get("query")
+        if isinstance(query, str) and query:
+            return query
+        return ", ".join(f"{key}={value}" for key, value in args.items())[:80]
+    return str(args)[:80]
+
 
 def _accumulate_delta(delta: dict, acc: ToolCall) -> str:
     """Merge tool_call deltas and return text content."""
@@ -260,9 +297,9 @@ def _handle_tool_calls(
     for tc in sorted_tcs:
         if on_status is not None:
             on_status(f"running {tc['name']}…")
-        query = json.loads(tc["arguments"]).get("query", "")
+        detail = _describe_tool_call(tc["arguments"])
         console.print(
-            f"  [dim]⟳ calling[/] [bold cyan]{tc['name']}[/][dim]({query})[/]"
+            f"  [dim]⟳ calling[/] [bold cyan]{tc['name']}[/][dim]({detail})[/]"
         )
         messages.append(
             {
@@ -326,6 +363,7 @@ def _do_stream(
     _md,
     on_text: Callable[[str], None] | None = None,
     on_status: Callable[[str], None] | None = None,
+    _tool_round: int = 0,
 ) -> tuple[str, str, str, dict]:
     """Stream a single chat completion, handling tool calls automatically."""
     collected, used_model, first_token_time, token_count = "", body["model"], None, 0
@@ -335,14 +373,58 @@ def _do_stream(
     if on_status is not None:
         on_status("waiting for model…")
     with httpx.Client(timeout=120) as http:
-        with http.stream("POST", url, json=body, headers=headers) as resp:
+        # Retry the connection/status handshake on transient failures. Once any
+        # text has streamed, a retry could duplicate output, so we stop then.
+        stack = ExitStack()
+        attempt = 0
+        while True:
+            try:
+                resp = stack.enter_context(
+                    http.stream("POST", url, json=body, headers=headers)
+                )
+            except httpx.TransportError as exc:
+                if attempt < _MAX_RETRIES and not collected:
+                    attempt += 1
+                    if on_status is not None:
+                        on_status(f"retrying ({attempt}/{_MAX_RETRIES})…")
+                    time.sleep(_retry_delay(None, attempt))
+                    continue
+                stack.close()
+                if on_text is not None:
+                    raise RuntimeError(f"Network error: {exc}") from exc
+                console.print(
+                    Panel(
+                        Text(f"Could not reach the provider: {exc}", style="red"),
+                        title="request failed",
+                        title_align="left",
+                        border_style="red",
+                    )
+                )
+                sys.exit(1)
+
             if resp.status_code != 200:
                 resp.read()
+                if (
+                    resp.status_code in _RETRYABLE_STATUS
+                    and attempt < _MAX_RETRIES
+                    and not collected
+                ):
+                    attempt += 1
+                    if on_status is not None:
+                        on_status(f"retrying ({attempt}/{_MAX_RETRIES})…")
+                    delay = _retry_delay(resp, attempt)
+                    stack.close()
+                    stack = ExitStack()
+                    time.sleep(delay)
+                    continue
+                stack.close()
                 if on_text is not None:
                     detail, hint = _http_error_detail(resp.status_code, resp.text)
                     raise RuntimeError(f"HTTP {resp.status_code}: {detail} {hint}")
                 _print_http_error(console, resp.status_code, resp.text)
+            break
 
+        try:
             usage: dict = {}
             if _PLAIN or on_text is not None:
                 # Raw output: stream text verbatim as it arrives.
@@ -419,6 +501,8 @@ def _do_stream(
                                 last_len = len(collected)
                 if collected:
                     console.print(Padding(_md(collected), (1, 2)))
+        finally:
+            stack.close()
 
     t_start = first_token_time or time.perf_counter()
     t_end = time.perf_counter()
@@ -427,11 +511,15 @@ def _do_stream(
     ttft = (first_token_time - request_start) if first_token_time else None
 
     if tool_calls_acc:
+        if _tool_round >= _MAX_TOOL_ROUNDS:
+            # Model kept calling tools; stop and surface whatever text we have.
+            note = "Stopped after too many tool calls in one turn."
+            return collected or note, used_model, provider_name, usage
         _handle_tool_calls(tool_calls_acc, messages, console, on_status)
         body["messages"] = messages
         return _do_stream(
             url, body, headers, messages, console, _md,
-            on_text=on_text, on_status=on_status,
+            on_text=on_text, on_status=on_status, _tool_round=_tool_round + 1,
         )
 
     real_tokens = usage.get("completion_tokens", token_count)
@@ -537,13 +625,30 @@ def _short(model: str) -> str:
 
 
 async def _query_model(model: str, messages: list[dict], provider: dict | None, state: dict) -> None:
-    """Run one non-streaming completion, recording progress in `state`."""
+    """Run one non-streaming completion, retrying transient failures."""
     url, headers, body = _build_request(model, messages, provider, stream=False)
     start = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=180) as http:
-            resp = await http.post(url, json=body, headers=headers)
-            if resp.status_code != 200:
+            for attempt in range(_MAX_RETRIES + 1):
+                try:
+                    resp = await http.post(url, json=body, headers=headers)
+                except httpx.TransportError:
+                    if attempt < _MAX_RETRIES:
+                        await asyncio.sleep(_retry_delay(None, attempt + 1))
+                        continue
+                    raise
+                if resp.status_code == 200:
+                    data = resp.json()
+                    choice = (data.get("choices") or [{}])[0]
+                    state["text"] = (choice.get("message") or {}).get("content") or ""
+                    state["usage"] = data.get("usage") or {}
+                    state["resolved"] = data.get("model", model)
+                    state["status"] = "done"
+                    return
+                if resp.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES:
+                    await asyncio.sleep(_retry_delay(resp, attempt + 1))
+                    continue
                 state["status"] = "error"
                 detail, hint = _http_error_detail(resp.status_code, resp.text)
                 state["error"] = (
@@ -552,12 +657,6 @@ async def _query_model(model: str, messages: list[dict], provider: dict | None, 
                     + (f" — {hint}" if hint and not detail else "")
                 )
                 return
-            data = resp.json()
-            choice = (data.get("choices") or [{}])[0]
-            state["text"] = (choice.get("message") or {}).get("content") or ""
-            state["usage"] = data.get("usage") or {}
-            state["resolved"] = data.get("model", model)
-            state["status"] = "done"
     except Exception as exc:  # noqa: BLE001 - surface any network/parse error in UI
         state["status"] = "error"
         state["error"] = str(exc)

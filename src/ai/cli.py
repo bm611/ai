@@ -143,7 +143,7 @@ def cli(ctx, model, files, chat, ensemble, no_banner, plain):
     \b
     Examples:
         ai "explain quicksort in python"
-        ai -f main.py "explain this code"
+        ai -f app.py "explain this code"
         ai -f src/a.py -f src/b.py "find the bug"
         ai -m anthropic/claude-sonnet-4 "write a haiku"
         ai --no-chat "explain quicksort"   # single answer
