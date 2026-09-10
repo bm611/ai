@@ -62,7 +62,8 @@ command as you type.
 | Command | Description |
 |---|---|
 | `/help` | List commands and keyboard shortcuts |
-| `/clear` | Start a new conversation |
+| `/new` | Start a new conversation (resets context) |
+| `/clear` | Clear the screen, keep conversation context |
 | `/cancel` | Stop the current request |
 | `/quit` | Exit and return to the shell (also `/exit`, `q`, Ctrl+C, Ctrl+D) |
 Answers stream in place, appending block by block so the screen stays steady

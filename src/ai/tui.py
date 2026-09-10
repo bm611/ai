@@ -35,7 +35,8 @@ class Command(NamedTuple):
 
 COMMANDS: tuple[Command, ...] = (
     Command("/help", "", "List commands and keyboard shortcuts"),
-    Command("/clear", "", "Start a new conversation"),
+    Command("/new", "", "Start a new conversation"),
+    Command("/clear", "", "Clear the screen, keep context"),
     Command("/cancel", "", "Stop the current request"),
     Command("/quit", "", "Exit and return to the shell"),
 )
@@ -414,14 +415,23 @@ class ChatApp(app.App):
         if not await self._run_command(prompt):
             await self._submit(prompt)
 
+    async def _clear_screen(self) -> None:
+        """Remove every message from view without touching conversation history."""
+        history = self.query_one("#conversation", containers.VerticalScroll)
+        await history.remove_children()
+        history.remove_class("active")
+
     async def _run_command(self, prompt: str) -> bool:
         """Run a slash command, returning False if it should go to the model."""
         name = COMMAND_ALIASES.get(prompt, prompt)
-        if name == "/clear":
-            await self.query_one("#conversation").remove_children()
-            self.query_one("#conversation").remove_class("active")
+        if name == "/new":
+            await self._clear_screen()
             self.messages = self._new_messages()
-            self._status("ready")
+            self._status("new conversation · ready")
+            return True
+        if name == "/clear":
+            await self._clear_screen()
+            self._status("cleared · context kept")
             return True
         if name == "/help":
             await self._notice(_help_text())

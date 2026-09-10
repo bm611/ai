@@ -48,8 +48,21 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 )
                 prompt.value = "/clear"
                 await pilot.press("enter")
-                self.assertEqual(len(chat.messages), 1)
+                await pilot.pause()
+                # /clear hides the screen but keeps the conversation context.
+                self.assertEqual(len(chat.messages), 5)
                 self.assertFalse(chat.query_one("#conversation").display)
+                prompt.value = "after clear"
+                await pilot.press("enter")
+                await chat.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertEqual(
+                    requests[2][1:3],
+                    [
+                        {"role": "user", "content": "hello"},
+                        {"role": "assistant", "content": "A streamed answer."},
+                    ],
+                )
                 prompt.value = "/help"
                 await pilot.press("enter")
                 self.assertTrue(chat.query_one("#conversation").display)
@@ -174,6 +187,29 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(prompt.value, "")
             self.assertIn("Commands", str(chat.query_one("#conversation").children[-1].render()))
             await pilot.press("ctrl+c")
+
+    async def test_new_command_starts_fresh_conversation(self):
+        def stream(url, body, headers, messages, console, renderer, on_text, on_status):
+            return "answer", "test", "", {}
+
+        chat = ChatApp("test-model")
+        with (
+            mock.patch.dict("os.environ", {"OPENROUTER_API_KEY": "test"}),
+            mock.patch("ai.client._do_stream", side_effect=stream),
+        ):
+            async with chat.run_test(size=(80, 24)) as pilot:
+                prompt = chat.query_one(widgets.Input)
+                prompt.value = "hello"
+                await pilot.press("enter")
+                await chat.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertEqual(len(chat.messages), 3)
+                prompt.value = "/new"
+                await pilot.press("enter")
+                await pilot.pause()
+                self.assertEqual(len(chat.messages), 1)
+                self.assertFalse(chat.query_one("#conversation").display)
+                await pilot.press("ctrl+c")
 
     async def test_unknown_command_suggests_close_match(self):
         chat = ChatApp("test-model")
