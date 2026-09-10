@@ -51,10 +51,20 @@ ai --plain "..." > response.md     # force raw markdown output
 
 Interactive `ai` opens a full-screen chat with a compact header, scrollable
 conversation, persistent input, and a muted model/status line. Type a message
-and press Enter to send. `/help` shows shortcuts, `/clear` starts a new
-conversation, `/cancel` stops the current request, and `/quit` (or Ctrl+C /
-Ctrl+D) returns to your shell. The status line shows the current request stage
-and elapsed time.
+and press Enter to send. The status line shows the current request stage and
+elapsed time.
+
+Typing `/` opens a command palette above the input. Arrow keys move through the
+matching commands, Tab (or →) completes the highlighted one, Enter runs it, and
+Escape dismisses the menu. A dimmed inline completion previews the rest of a
+command as you type.
+
+| Command | Description |
+|---|---|
+| `/help` | List commands and keyboard shortcuts |
+| `/clear` | Start a new conversation |
+| `/cancel` | Stop the current request |
+| `/quit` | Exit and return to the shell (also `/exit`, `q`, Ctrl+C, Ctrl+D) |
 Answers stream in place, appending block by block so the screen stays steady
 instead of redrawing the whole reply on every chunk. Code blocks render in a
 framed panel labelled with their language.

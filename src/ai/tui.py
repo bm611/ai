@@ -1,16 +1,21 @@
 """Minimal full-screen chat using the existing streaming client."""
 
 import copy
+import difflib
 import io
 import os
 import time
 from datetime import date
 from importlib.metadata import version
+from typing import NamedTuple
 
 from rich import console, markdown, text
-from textual import app, binding, containers, widgets, work
+from textual import app, binding, containers, events, widgets, work
+from textual.css.query import NoMatches
+from textual.suggester import SuggestFromList
 from textual.theme import Theme
 from textual.widgets import markdown as md
+from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
 from ai import client
@@ -18,6 +23,81 @@ from ai import client
 # Hand text to the UI thread at most this often; the Markdown widget coalesces
 # whatever arrives between flushes, so a slower cadence costs nothing visually.
 _FLUSH_INTERVAL = 0.08
+
+
+class Command(NamedTuple):
+    """A slash command surfaced by the in-chat palette."""
+
+    name: str
+    args: str
+    description: str
+
+
+COMMANDS: tuple[Command, ...] = (
+    Command("/help", "", "List commands and keyboard shortcuts"),
+    Command("/clear", "", "Start a new conversation"),
+    Command("/cancel", "", "Stop the current request"),
+    Command("/quit", "", "Exit and return to the shell"),
+)
+
+# Aliases match in the palette but always resolve to their canonical command.
+COMMAND_ALIASES = {"/exit": "/quit"}
+
+_COMMAND_LABEL_WIDTH = max(
+    len(f"{command.name} {command.args}".strip()) for command in COMMANDS
+)
+
+
+def _command_names() -> list[str]:
+    return [command.name for command in COMMANDS]
+
+
+def _match_commands(value: str) -> list[Command]:
+    """Commands whose name or alias starts with the typed slash value.
+
+    The palette collapses once the value is a complete command so it doesn't
+    linger while the user is ready to run it.
+    """
+    if not value.startswith("/") or " " in value:
+        return []
+    needle = value.lower()
+    exact = {command.name.lower() for command in COMMANDS} | set(COMMAND_ALIASES)
+    if needle in exact:
+        return []
+    matches = []
+    for command in COMMANDS:
+        aliases = [a for a, target in COMMAND_ALIASES.items() if target == command.name]
+        if any(candidate.lower().startswith(needle) for candidate in (command.name, *aliases)):
+            matches.append(command)
+    return matches
+
+
+def _unknown_command(value: str) -> str:
+    close = difflib.get_close_matches(value, _command_names(), n=1, cutoff=0.5)
+    if close:
+        return f"unknown command · did you mean {close[0]}?"
+    return "unknown command · try /help"
+
+
+def _help_text() -> text.Text:
+    """Formatted command reference shown by /help."""
+    out = text.Text()
+    out.append("Commands\n", "bold")
+    for command in COMMANDS:
+        label = f"{command.name} {command.args}".strip()
+        out.append(f"  {label.ljust(_COMMAND_LABEL_WIDTH)}  ", "bold")
+        out.append(f"{command.description}\n", "dim")
+    out.append("\nShortcuts\n", "bold")
+    for keys, description in (
+        ("Enter", "Send a message"),
+        ("↑ / ↓", "Pick a command"),
+        ("Tab / →", "Complete a command"),
+        ("Ctrl+C / Ctrl+D", "Exit"),
+    ):
+        out.append(f"  {keys.ljust(_COMMAND_LABEL_WIDTH)}  ", "bold")
+        out.append(f"{description}\n", "dim")
+    return out
+
 
 # Textual palettes mirroring the rich themes the non-interactive CLI uses.
 THEMES = {
@@ -89,6 +169,80 @@ class Answer(widgets.Markdown):
     BLOCKS = widgets.Markdown.BLOCKS | {"fence": CodeFence, "code_block": CodeFence}
 
 
+class CommandPalette(widgets.OptionList):
+    """Dropdown of matching slash commands shown above the composer."""
+
+    can_focus = False
+
+    def update_matches(self, value: str) -> None:
+        matches = _match_commands(value)
+        if not matches:
+            self.clear_options()
+            self.display = False
+            return
+        self.set_options(
+            Option(
+                text.Text.assemble(
+                    (f"{command.name} {command.args}".strip().ljust(_COMMAND_LABEL_WIDTH), "bold"),
+                    ("   ", ""),
+                    (command.description, "dim"),
+                ),
+                id=command.name,
+            )
+            for command in matches
+        )
+        self.display = True
+        self.highlighted = 0
+
+    def command(self) -> str | None:
+        """The canonical name of the highlighted command, if any."""
+        option = self.highlighted_option
+        return option.id if option is not None else None
+
+
+class CommandInput(widgets.Input):
+    """Composer input that hands navigation keys to the command palette."""
+
+    async def _on_key(self, event: events.Key) -> None:
+        palette = self._palette()
+        if palette is not None and palette.display:
+            if event.key in ("up", "down"):
+                if event.key == "down":
+                    palette.action_cursor_down()
+                else:
+                    palette.action_cursor_up()
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "tab":
+                command = palette.command()
+                if command is not None:
+                    self.value = command
+                    self.cursor_position = len(command)
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "escape":
+                palette.display = False
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "enter":
+                command = palette.command()
+                if command is not None and self.value.strip() != command:
+                    # Turn a partial command into the highlighted one before the
+                    # submit binding runs, so Enter always runs what's shown.
+                    self.value = command
+                    self.cursor_position = len(command)
+        await super()._on_key(event)
+
+    def _palette(self) -> CommandPalette | None:
+        try:
+            return self.screen.query_one(CommandPalette)
+        except NoMatches:
+            return None
+
+
 class ChatApp(app.App):
     """Keep conversation, prompt, and model status on one terminal screen."""
 
@@ -101,6 +255,15 @@ class ChatApp(app.App):
     .question { color: $foreground 80%; }
     .error { color: $text-error; }
     .muted { color: $text-muted; }
+    #palette {
+        display: none; height: auto; max-height: 8;
+        border: round $panel; background: $surface;
+        padding: 0 1; margin: 0 0 1 0;
+    }
+    #palette > .option-list--option { padding: 0 1; }
+    #palette > .option-list--option-highlighted {
+        color: $foreground; background: $primary 30%;
+    }
     #composer { height: 1; }
     #marker { width: 2; color: $primary; }
     #prompt {
@@ -182,9 +345,13 @@ class ChatApp(app.App):
         )
         yield widgets.Static(heading, id="heading")
         yield containers.VerticalScroll(id="conversation")
+        yield CommandPalette(id="palette")
         with containers.Horizontal(id="composer"):
             yield widgets.Static("│", id="marker")
-            yield widgets.Input(id="prompt")
+            yield CommandInput(
+                id="prompt",
+                suggester=SuggestFromList(_command_names(), case_sensitive=False),
+            )
         yield widgets.Static(id="status")
 
     async def on_mount(self) -> None:
@@ -226,6 +393,9 @@ class ChatApp(app.App):
         self.busy = False
         self._status("cancelled · ready")
 
+    async def on_input_changed(self, event: widgets.Input.Changed) -> None:
+        self.query_one(CommandPalette).update_matches(event.value)
+
     async def on_input_submitted(self, event: widgets.Input.Submitted) -> None:
         prompt = event.value.strip()
         if not prompt:
@@ -241,26 +411,34 @@ class ChatApp(app.App):
             self._status(self.phase)
             event.input.value = prompt
             return
-        if prompt == "/clear":
+        if not await self._run_command(prompt):
+            await self._submit(prompt)
+
+    async def _run_command(self, prompt: str) -> bool:
+        """Run a slash command, returning False if it should go to the model."""
+        name = COMMAND_ALIASES.get(prompt, prompt)
+        if name == "/clear":
             await self.query_one("#conversation").remove_children()
             self.query_one("#conversation").remove_class("active")
             self.messages = self._new_messages()
             self._status("ready")
-        elif prompt == "/help":
-            await self._notice(
-                "Enter sends · /clear starts fresh · /quit exits\n"
-                "/cancel stops the current request\n"
-                "Scroll to review answers · Ctrl+C or Ctrl+D exits"
-            )
-        elif prompt.startswith("/"):
-            self._status("unknown command · try /help")
-        else:
-            await self._submit(prompt)
+            return True
+        if name == "/help":
+            await self._notice(_help_text())
+            return True
+        if name == "/quit":
+            self.exit()
+            return True
+        if prompt.startswith("/"):
+            self._status(_unknown_command(prompt))
+            return True
+        return False
 
-    async def _notice(self, value: str) -> None:
+    async def _notice(self, value: str | text.Text) -> None:
         history = self.query_one("#conversation", containers.VerticalScroll)
         history.add_class("active")
-        await history.mount(widgets.Static(text.Text(value), classes="message"))
+        content = value if isinstance(value, text.Text) else text.Text(value)
+        await history.mount(widgets.Static(content, classes="message"))
         history.scroll_end(animate=False)
 
     async def _submit(self, prompt: str) -> None:

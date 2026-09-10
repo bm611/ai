@@ -7,7 +7,7 @@ from unittest import mock
 
 from textual import widgets
 
-from ai.tui import Answer, ChatApp, CodeFence
+from ai.tui import COMMANDS, Answer, ChatApp, CodeFence, CommandPalette
 
 
 class TuiTest(unittest.IsolatedAsyncioTestCase):
@@ -125,6 +125,67 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("x = 1", fence.code)
                 # Math is only rewritable once the whole answer has landed.
                 self.assertIn("`E=mc^2`", answer.source)
+
+    async def test_command_palette_filters_navigates_and_completes(self):
+        chat = ChatApp("test-model")
+        async with chat.run_test(size=(80, 24)) as pilot:
+            prompt = chat.query_one(widgets.Input)
+            palette = chat.query_one(CommandPalette)
+            self.assertFalse(palette.display)
+
+            prompt.value = "/"
+            await pilot.pause()
+            self.assertTrue(palette.display)
+            self.assertEqual(palette.option_count, len(COMMANDS))
+            self.assertEqual(palette.highlighted_option.id, "/help")
+
+            prompt.value = "/c"
+            await pilot.pause()
+            shown = [
+                palette.get_option_at_index(index).id
+                for index in range(palette.option_count)
+            ]
+            self.assertEqual(shown, ["/clear", "/cancel"])
+
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertEqual(palette.highlighted_option.id, "/cancel")
+            await pilot.press("up")
+            await pilot.pause()
+            self.assertEqual(palette.highlighted_option.id, "/clear")
+
+            prompt.value = "/ca"
+            await pilot.pause()
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertEqual(prompt.value, "/cancel")
+            self.assertFalse(palette.display)
+
+            await pilot.press("ctrl+c")
+
+    async def test_enter_runs_highlighted_command(self):
+        chat = ChatApp("test-model")
+        async with chat.run_test(size=(80, 24)) as pilot:
+            prompt = chat.query_one(widgets.Input)
+            prompt.value = "/"
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(prompt.value, "")
+            self.assertIn("Commands", str(chat.query_one("#conversation").children[-1].render()))
+            await pilot.press("ctrl+c")
+
+    async def test_unknown_command_suggests_close_match(self):
+        chat = ChatApp("test-model")
+        async with chat.run_test(size=(80, 24)) as pilot:
+            prompt = chat.query_one(widgets.Input)
+            prompt.value = "/clera"
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertIn(
+                "did you mean /clear", str(chat.query_one("#status").render())
+            )
+            await pilot.press("ctrl+c")
 
     async def test_request_error_leaves_input_usable(self):
         chat = ChatApp("test-model", initial_prompt="hello")
