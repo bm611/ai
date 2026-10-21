@@ -8,15 +8,9 @@ CONFIG_DIR = Path.home() / ".config" / "ai-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULTS = {
-    "model": "inception/mercury-2.5",
+    "model": "inception/mercury-3",
     "provider": None,  # let OpenRouter pick; or set e.g. {"order": ["DeepInfra"]}
     "theme": "auto",  # "auto", "dark", "light", or "retro"
-    # ensemble mode: query these models in parallel, then consolidate
-    "ensemble_models": [
-        "deepseek/deepseek-v4-flash",
-        "google/gemini-3.1-flash-lite-preview",
-    ],
-    "consensus_model": "deepseek/deepseek-v4-pro",
 }
 
 
@@ -47,9 +41,15 @@ def is_dark_mode() -> bool:
 def _ensure_config() -> dict:
     if CONFIG_FILE.exists():
         cfg = json.loads(CONFIG_FILE.read_text())
+        # Remove settings from the retired ensemble mode.
+        changed = False
+        for key in ("ensemble_models", "consensus_model"):
+            if key in cfg:
+                del cfg[key]
+                changed = True
         # backfill any keys added in newer versions
         merged = {**DEFAULTS, **cfg}
-        if merged != cfg:
+        if changed or merged != cfg:
             save_config(merged)
         return merged
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)

@@ -6,11 +6,11 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from ai.client import ensemble_prompt, stream_prompt
+from ai.client import stream_prompt
 from ai.config import CONFIG_FILE, load_config, save_config
 
 POPULAR_MODELS = [
-    ("inception/mercury-2.5", "Mercury 2.5"),
+    ("inception/mercury-3", "Mercury 3"),
     ("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash"),
     ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
     ("google/gemma-4-31b-it", "Gemma 4 31B Instruct"),
@@ -27,15 +27,9 @@ THEME_OPTIONS = [
 ]
 
 CONFIG_KEYS = [
-    ("model", "OpenRouter model ID", "inception/mercury-2.5"),
+    ("model", "OpenRouter model ID", "inception/mercury-3"),
     ("theme", "Color theme for output", "auto"),
     ("provider", "OpenRouter provider routing (JSON)", '{"order": ["DeepInfra"]}'),
-    (
-        "ensemble_models",
-        "Models queried in parallel for -e (JSON list or comma-separated)",
-        '["deepseek/deepseek-v4-flash", "google/gemini-3.1-flash-lite-preview"]',
-    ),
-    ("consensus_model", "Model that consolidates ensemble answers", "deepseek/deepseek-v4-pro"),
 ]
 
 VALID_THEMES = {theme for theme, _ in THEME_OPTIONS}
@@ -47,14 +41,6 @@ def _read_file(path_str: str) -> str:
         Console(stderr=True).print(f"[red bold]Error:[/] file not found: {p}")
         sys.exit(1)
     return f'<file path="{p.name}">\n{p.read_text()}\n</file>'
-
-
-def _ensemble_models(cfg: dict) -> list[str]:
-    """Return the configured ensemble models as a list of model ids."""
-    raw = cfg.get("ensemble_models") or []
-    if isinstance(raw, str):
-        return [m.strip() for m in raw.split(",") if m.strip()]
-    return list(raw)
 
 
 def _marked_table(rows: list[tuple[str, str]], current: str) -> Table:
@@ -115,14 +101,6 @@ class PromptGroup(click.Group):
     help="Ask follow-up questions in the terminal (default: enabled).",
 )
 @click.option(
-    "-e",
-    "--ensemble",
-    "ensemble",
-    is_flag=True,
-    default=False,
-    help="Query multiple models in parallel, then consolidate into one answer.",
-)
-@click.option(
     "--no-banner",
     "no_banner",
     is_flag=True,
@@ -137,7 +115,7 @@ class PromptGroup(click.Group):
     help="Raw markdown output with no styling (implied when stdout is piped).",
 )
 @click.pass_context
-def cli(ctx, model, files, chat, ensemble, no_banner, plain):
+def cli(ctx, model, files, chat, no_banner, plain):
     """AI CLI — query LLMs via OpenRouter from your terminal.
 
     \b
@@ -147,7 +125,6 @@ def cli(ctx, model, files, chat, ensemble, no_banner, plain):
         ai -f src/a.py -f src/b.py "find the bug"
         ai -m anthropic/claude-sonnet-4 "write a haiku"
         ai --no-chat "explain quicksort"   # single answer
-        ai -e "what is the best sorting algorithm?"  # ensemble: query 2 models + consolidate
         pbpaste | ai "review this code"    # piped output is plain markdown
         cat log.txt | ai "summarize errors"
         ai --plain "..." > response.md     # force raw output for redirection
@@ -191,7 +168,7 @@ def cli(ctx, model, files, chat, ensemble, no_banner, plain):
 
     use_tui = (
         chat and sys.stdin.isatty() and not pipe_detected
-        and not plain and not ensemble
+        and not plain
     )
     if not parts and not use_tui:
         click.echo(ctx.get_help())
@@ -201,12 +178,6 @@ def cli(ctx, model, files, chat, ensemble, no_banner, plain):
     provider = cfg.get("provider")
     theme = cfg.get("theme", "auto")
     full_prompt = "\n\n".join(parts)
-
-    if ensemble:
-        models = _ensemble_models(cfg)
-        consensus_model = model or cfg.get("consensus_model", "deepseek/deepseek-v4-pro")
-        ensemble_prompt(full_prompt, models, consensus_model, provider, theme)
-        return
 
     use_model = model or cfg["model"]
     if use_tui:
@@ -258,16 +229,12 @@ def config_set(key, value):
         model            OpenRouter model ID
         theme            auto | dark | light | retro
         provider         Provider routing as JSON
-        ensemble_models  Models for -e (JSON list or comma-separated)
-        consensus_model  Model that consolidates ensemble answers
 
     \b
     Examples:
         ai config set model anthropic/claude-sonnet-4
         ai config set theme dark
         ai config set provider '{"order": ["DeepInfra"]}'
-        ai config set ensemble_models 'deepseek/deepseek-v4-flash,x-ai/grok-4'
-        ai config set consensus_model deepseek/deepseek-v4-pro
     """
     valid_keys = {k for k, _, _ in CONFIG_KEYS}
     if key not in valid_keys:
@@ -290,13 +257,6 @@ def config_set(key, value):
             value = json.loads(value)
         except json.JSONDecodeError:
             value = {"order": [value]}
-
-    if key == "ensemble_models":
-        try:
-            parsed = json.loads(value)
-            value = parsed if isinstance(parsed, list) else [str(parsed)]
-        except json.JSONDecodeError:
-            value = [m.strip() for m in value.split(",") if m.strip()]
 
     cfg[key] = value
     save_config(cfg)
